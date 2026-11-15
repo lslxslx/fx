@@ -83,92 +83,171 @@ window.ForexData = (() => {
   return {query,convert,load};
 })();
 
-// (C) luislamani, 112020.112022.324
 
-// global
-let nxloading = '\u2026',
-    nxupdate = '\u21BB',
-    nxloadc = '\u2192';
+// (C) luislamani — class refactor, phase 1
+class HistoricalPriceChart {
+  constructor(container = document.querySelector('article')) {
+    if (!container) throw new Error('Mungon elementi article i grafikut.');
+    this.container = container;
+    this.svg = d3.select(container).selectAll('svg').data([null]).join('svg');
+    this.currentData = [];
+    this.config = {};
+    this.state = { loading: false, requestId: 0, currency: null, interval: null };
+    this.listeners = [];
+    this.destroyed = false;
+    this.bindControls();
+    this.ready = this.reloadData();
+  }
 
-// match moving average input
-function mxi(e) {
-    // S - simple moving average; E - exponential moving average; D - double exponential moving average
-    let clean = e.value.match(/^([SED]{1})(?!(0))(\d*)$/gi);
-    // don't move cursor to end if no change
-    if (clean !== e.value) e.value = clean;
-}
-// match bollinger / macd-h rsi /roc input
-function maxi(e) {
-    let clean = e.value.match(/^(?!(0))(\d{1,3})$/gi);
-    if (clean !== e.value) e.value = clean;
-}
+  listen(element, event, handler) {
+    if (!element) return;
+    element.addEventListener(event, handler);
+    this.listeners.push(() => element.removeEventListener(event, handler));
+  }
 
-document.querySelectorAll('#overlays input[type=text], #indicators input[type=text]').forEach((et) => {
-    et.addEventListener('input', () => {
-        if (et.id == 'ma_a' || et.id == 'ma_b' || et.id == 'ma_c' || et.id == 'ma_d') {
-            mxi(et);
-        }
-        else {
-            maxi(et);
-        }
-    })
-});
-
-// match date input, update date from interval
-// function dx(e) {
-//     // e.value = e.value.match(/^([0-9.])*$/g);
-//     let dt = new Date(),
-//         year = dt.getFullYear(),
-//         month = dt.getMonth(),
-//         day = dt.getDate();
-//     return new Date(year - e, month, day).toISOString().split('T')[0];
-// }
-// document.querySelectorAll('input[name=interval]').forEach((e) => {
-//     e.addEventListener('click', () => {
-//         document.getElementById('start').value = e.value == 'wave' ? dx(5) : (e.value == 'mave' ? dx(20) : dx(1));
-//     })
-// });
-
-// update chart from panel and close menu function
-let isRunning = false,
-    cpx = document.getElementById('cpanel'),
-    selectix = cpx.querySelector('select');
-cpx.querySelectorAll('input[type=radio], input[type=checkbox], input[type=date], input[type=text]').forEach((targetDetail) => {
-    targetDetail.addEventListener('click', () => {
-        if (!isRunning) {
-            if (targetDetail.type == 'checkbox') {
-                updatechart();
-            }
-            if (targetDetail.type == 'radio') {
-                switchintervalix(targetDetail.value, selectix);
-                updatechart();
-                closemenu();
-            }
-        }
-    });
-    targetDetail.addEventListener('change', () => {
-        if (targetDetail.id == 'start') {
-            targetDetail.value ? selectix.disabled = true : selectix.disabled = false;
-            targetDetail.value ? selectix.style.textDecoration = 'line-through' : selectix.style.textDecoration = 'unset';
-        }
-    });
-    targetDetail.addEventListener('keydown', (e) => {
-        if (e.key == 'Enter') {
-            if (!isRunning) {
-                closemenu();
-                updatechart();
-            }
-        }
-    });
-});
-selectix.addEventListener('change', () => {
-    if (!isRunning) {
-        closemenu();
-        updatechart();
+  readIndicators() {
+    const value = id => document.getElementById(id)?.value || '';
+    const number = (id, fallback, min = 1) => {
+      const n = Number(value(id));
+      return Number.isFinite(n) && n >= min ? n : fallback;
+    };
+    const checked = id => Boolean(document.getElementById(id)?.checked);
+    const config = {};
+    for (const suffix of ['a','b','c','d']) {
+      const match = value('ma_'+suffix).trim().match(/^([SED])([1-9]\d*)$/i);
+      config['ma_'+suffix] = match ? Number(match[2]) : NaN;
+      config['mma_'+suffix] = match ? match[1].toUpperCase() : null;
     }
-});
-// switch interval ix
-function switchintervalix(v, vix) {
+    Object.assign(config, {
+      N: Math.trunc(number('bb_N',20,2)), K: number('bb_K',2),
+      eshort: Math.trunc(number('macd_fast',8)), elong: Math.trunc(number('macd_slow',17)),
+      esignal: Math.trunc(number('macd_signal',9)), RC: Math.trunc(number('roc_values',12)),
+      RS: Math.trunc(number('rsi_values',14)), bband:checked('bband'), macd:checked('macd'),
+      macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi')
+    });
+    this.config = config;
+  }
+
+  parameters() {
+    return {
+      c: document.querySelector('input[name=currency]:checked')?.value || 'EUR',
+      fd: document.getElementById('start')?.value || '', td: document.getElementById('end')?.value || '',
+      i: document.querySelector('input[name=interval]:checked')?.value || 'daily',
+      ix: document.getElementById('ix')?.value || '12'
+    };
+  }
+
+  setLoading(loading) {
+    this.state.loading = loading;
+    const button = document.getElementById('update');
+    if (button) { button.disabled = loading; button.value = loading ? '\u2026' : '\u21BB'; }
+  }
+
+  async reloadData() {
+    const requestId = ++this.state.requestId;
+    const params = this.parameters();
+    this.setLoading(true);
+    try {
+      const rows = await window.ForexData.query('q?'+new URLSearchParams(params));
+      if (this.destroyed || requestId !== this.state.requestId) return;
+      this.currentData = this.parseData(rows, params.c);
+      this.state.currency = params.c;
+      this.state.interval = params.i;
+      // Trendlines currently use pixels; do not carry them across datasets.
+      this.svg.select('.trendlines').remove();
+      this.refreshIndicators();
+    } catch (error) {
+      if (!this.destroyed && requestId === this.state.requestId) {
+        console.error(error);
+        this.showError('Nuk u ngarkuan të dhënat: '+error.message);
+      }
+    } finally {
+      if (!this.destroyed && requestId === this.state.requestId) this.setLoading(false);
+    }
+  }
+
+  refreshIndicators() {
+    if (this.destroyed) return;
+    this.readIndicators();
+    this.render();
+  }
+
+  render() {
+    this.container.querySelector('[data-chart-error]')?.remove();
+    const trends = this.svg.select('.trendlines').node();
+    if (trends) trends.remove();
+    this.svg.selectAll('*').remove();
+    if (!this.currentData.length) { this.showError('Nuk ka të dhëna për intervalin e zgjedhur.'); return; }
+    this.drawChart(this.currentData, this.state.currency);
+    if (trends) {
+      this.svg.select('.trendlines').remove();
+      this.svg.node().appendChild(trends);
+    }
+  }
+
+  showError(message) {
+    let node = this.container.querySelector('[data-chart-error]');
+    if (!node) { node=document.createElement('p'); node.dataset.chartError=''; node.setAttribute('role','status'); this.container.appendChild(node); }
+    node.textContent=message;
+  }
+
+  bindControls() {
+    const panel = document.getElementById('cpanel');
+    const select = document.getElementById('ix');
+    this.listen(panel, 'change', event => {
+      const target=event.target;
+      if (target.id==='start' && select) {
+        select.disabled=Boolean(target.value); select.style.textDecoration=target.value?'line-through':'unset';
+      }
+      if (target.matches('input[name=currency], input[name=interval], input[type=date], #ix')) {
+        if (target.name==='interval') this.switchintervalix(target.value,select);
+        this.closemenu(); this.reloadData();
+      } else if (target.matches('#overlays input, #indicators input')) this.refreshIndicators();
+    });
+    this.listen(panel, 'keydown', event => {
+      if(event.key!=='Enter' || event.target.id==='q') return;
+      event.preventDefault(); this.closemenu();
+      if(event.target.matches('#overlays input, #indicators input')) this.refreshIndicators();
+      else this.reloadData();
+    });
+    this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
+    this.listen(window,'orientationchange',()=>{
+      clearTimeout(this.layoutTimer);
+      this.layoutTimer=setTimeout(()=>{
+        if(this.destroyed)return;
+        this.svg.select('.trendlines').remove();
+        this.render();
+      },150);
+    });
+  }
+
+  closemenu() {
+    const label=document.querySelector('label[for=menu]'), menu=document.getElementById('menu');
+    if(label&&menu&&window.getComputedStyle(label,'::after').content.includes(label.getAttribute('data-abbr'))) menu.checked=false;
+  }
+
+  async convertOrQuote() {
+    const input=document.getElementById('q'), output=document.getElementById('cqr');
+    if(!input||!output)return;
+    try {
+      const result=await window.ForexData.convert(input.value);
+      output.textContent=result.R==='X'
+        ? `${result.Amount} ${result.Sell} = ${(result.Amount*result.Exchange).toLocaleString('en')} ${result.Buy}\n(${result.Source})`
+        : result.Error || '';
+    } catch(error) { output.textContent='Gabim: '+error.message; }
+  }
+
+  destroy() {
+    this.destroyed=true; this.state.requestId++;
+    clearTimeout(this.layoutTimer);
+    this.listeners.forEach(remove=>remove()); this.listeners=[];
+    this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
+    this.setLoading(false);
+  }
+
+  // Legacy calculations and rendering follow, retained for parity testing.
+
+switchintervalix(v, vix) {
     switch (v) {
         case 'quave':
             return vix.value = 0;
@@ -186,30 +265,25 @@ function switchintervalix(v, vix) {
             return vix.value;
     }
 }
-function closemenu() {
-    let menulabel = document.querySelector('label[for=menu]'),
-        pseudolabel = window.getComputedStyle(menulabel, '::after').content,
-        menuchecked = document.getElementById('menu').checked;
-    pseudolabel.includes(menulabel.getAttribute('data-abbr')) && menuchecked ? document.getElementById('menu').checked = false : null;
-}
+
 // switch moving averages 
-function SwMA(v, ldata, rdata) {
+SwMA(v, ldata, rdata) {
     switch (v.toUpperCase()) {
         case 'S':
-            return SMA(ldata, rdata);
+            return this.SMA(ldata, rdata);
             break;
         case 'E':
-            return EMA(ldata, rdata);
+            return this.EMA(ldata, rdata);
             break;
         case 'D':
-            return DEMA(ldata, rdata);
+            return this.DEMA(ldata, rdata);
             break;
         default:
             return null;
     }
 }
 // switch moving average symbol on legend
-function SwMALegend(v) {
+SwMALegend(v) {
     switch (v.toUpperCase()) {
         case 'S':
             return 'SMA';
@@ -225,162 +299,20 @@ function SwMALegend(v) {
     }
 }
 
-// fetch options
-let options = {
-    method: 'get',
-    mode: 'same-origin',
-    headers: {
-        'Content-type': 'application/json; charset=UTF-8',
-        'Clear-Site-Data': 'executionContexts',
-        'Accept-Language': 'sq-AL',
-        'Cross-Origin-Resource-Policy': 'same-origin'
-    }
-}
 
-// iq quotes and currency converter
-function cqu() {
-    let q = document.getElementById('q').value,
-        cqr = document.getElementById('cqr'),
-        cq = 'cq?q=' + q;
-    ForexData.convert(q).then(values => ({ json: () => Promise.resolve(values) }))
-        .then(function (response) { return response.json(); })
-        .then(function (values) {
-            cqr.innerText = null;
-            let request = values.R,
-                xr;
-            switch (request) {
-                case 'X':
-                    xr = values.Exchange * parseFloat(values.Amount);
-                    return cqr.innerText = `${values.Amount} ${values.Sell} = ${parseFloat(xr).toLocaleString('en')} ${values.Buy} \n (${values.Source})`;
-                    break;
-                case 'Q':
-                    return cqr.innerText = `${values.Name}: ${values.Price} \n Change: ${values.Change} (${values.ChangePercent}%) \n Previous Close: ${values.PreviousClose} \n Open: ${values.Open} Low: ${values.Low} High: ${values.High} \n 52 Week Range: ${values.ftWeekRange} \n Vol.: ${values.Volume}`;
-                    break;
-                case 'E':
-                    return cqr.innerText = values.Error;
-                    break;
-                default:
-                    return cqr.innerText = null;
-            }
-        })
-        .catch(function (err) { console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message; })
-}
-// end
+parseData(values, currency) {
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
 
-let currency = document.querySelector('input[name=currency]:checked').value,
-    start = document.getElementById('start').value,
-    end = document.getElementById('end').value,
-    interval = document.querySelector('input[name=interval]:checked').value,
-    intervalx = document.getElementById('ix').value,
-    val = document.getElementById('update'),
-    url = 'q?c=' + currency.toLowerCase() + '&fd=' + start + '&td=' + end + '&i=' + interval + '&ix=' + intervalx,
-    svgvB = document.querySelector('article');
-
-// technical indicators variables
-let ma_a = parseInt(document.getElementById('ma_a').value.match(/\d+/g), 10),
-    ma_b = parseInt(document.getElementById('ma_b').value.match(/\d+/g), 10),
-    ma_c = parseInt(document.getElementById('ma_c').value.match(/\d+/g), 10),
-    ma_d = parseInt(document.getElementById('ma_d').value.match(/\d+/g), 10),
-    mma_a = !isNaN(ma_a) ? document.getElementById('ma_a').value.charAt(0).toUpperCase() : null,
-    mma_b = !isNaN(ma_b) ? document.getElementById('ma_b').value.charAt(0).toUpperCase() : null,
-    mma_c = !isNaN(ma_c) ? document.getElementById('ma_c').value.charAt(0).toUpperCase() : null,
-    mma_d = !isNaN(ma_d) ? document.getElementById('ma_d').value.charAt(0).toUpperCase() : null,
-    // default values first load
-    N = 20, // N period of moving average
-    K = 2, // K * n-period standard deviation above/below moving average
-    eshort = 8, // MACD EMA 8 fast 
-    elong = 17, // MACD EMA 17 slow
-    esignal = 9, // MACD EMA 9 signal
-    RC = 12, // Rate of Change ROC
-    RS = 14, // Relative Strength Index
-    bband = document.getElementById('bband').checked,
-    macd = document.getElementById('macd').checked,
-    macdh = document.getElementById('macdh').checked,
-    roc = document.getElementById('roc').checked,
-    rsi = document.getElementById('rsi').checked;
-
-function updatechart() {
-    d3.select('article svg').remove();
-    // debugger; // inspect elements : update no data
-    val.value = nxloading;
-    val.disabled = true;
-    isRunning = true;
-    currency = document.querySelector('input[name=currency]:checked').value;
-    start = document.getElementById('start').value;
-    end = document.getElementById('end').value;
-    interval = document.querySelector('input[name=interval]:checked').value;
-    intervalx = document.getElementById('ix').value;
-    url = 'q?c=' + currency.toLowerCase() + '&fd=' + start + '&td=' + end + '&i=' + interval + '&ix=' + intervalx;
-    // technical indicators
-    ma_a = parseInt(document.getElementById('ma_a').value.match(/\d+/g), 10);
-    ma_b = parseInt(document.getElementById('ma_b').value.match(/\d+/g), 10);
-    ma_c = parseInt(document.getElementById('ma_c').value.match(/\d+/g), 10);
-    ma_d = parseInt(document.getElementById('ma_d').value.match(/\d+/g), 10);
-    mma_a = !isNaN(ma_a) ? document.getElementById('ma_a').value.charAt(0) : null;
-    mma_b = !isNaN(ma_b) ? document.getElementById('ma_b').value.charAt(0) : null;
-    mma_c = !isNaN(ma_c) ? document.getElementById('ma_c').value.charAt(0) : null;
-    mma_d = !isNaN(ma_d) ? document.getElementById('ma_d').value.charAt(0) : null;
-    bband = document.getElementById('bband').checked;
-    N = !isNaN(parseInt(document.getElementById('bb_N').value, 10)) ? document.getElementById('bb_N').value : 20;
-    K = !isNaN(parseInt(document.getElementById('bb_K').value, 10)) ? document.getElementById('bb_K').value : 2;
-    macd = document.getElementById('macd').checked;
-    macdh = document.getElementById('macdh').checked;
-    eshort = !isNaN(parseInt(document.getElementById('macd_fast').value, 10)) ? document.getElementById('macd_fast').value : 8;
-    elong = !isNaN(parseInt(document.getElementById('macd_slow').value, 10)) ? document.getElementById('macd_slow').value : 17;
-    esignal = !isNaN(parseInt(document.getElementById('macd_signal').value, 10)) ? document.getElementById('macd_signal').value : 9;
-    roc = document.getElementById('roc').checked;
-    RC = !isNaN(parseInt(document.getElementById('roc_values').value, 10)) ? document.getElementById('roc_values').value : 12;
-    rsi = document.getElementById('rsi').checked;
-    RS = !isNaN(parseInt(document.getElementById('rsi_values').value, 10)) ? document.getElementById('rsi_values').value : 14;
-
-    d3.select('article').append('svg');
-    ForexData.query(url).then(values => ({ json: () => Promise.resolve(values) }))
-        .then(function (response) { return response.json(); })
-        .then(function (values) {
-            let parsedData = parseData(values, currency);
-            val.value = nxupdate;
-            val.disabled = false;
-            isRunning = false;
-            drawChart(parsedData, currency);
-        })
-        .catch(function (err) {
-            console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message;
-            isRunning = false;
-        });
-}
-
-document.addEventListener('DOMContentLoaded', function () {
-    // debugger;
-    val.value = nxloading;
-    val.disabled = true;
-    isRunning = true;
-    ForexData.query(url).then(values => ({ json: () => Promise.resolve(values) }))
-        .then(function (response) { return response.json(); })
-        .then(function (values) {
-            let pdata = parseData(values, currency);
-            val.value = nxupdate;
-            val.disabled = false;
-            isRunning = false;
-            drawChart(pdata, currency);
-        })
-        .catch(function (err) { console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message; });
-
-    // update chart and close "menu"
-    document.getElementById('update').addEventListener('click', () => {
-        closemenu();
-        updatechart();
-    });
-});
-
-// orientation changes
-window.addEventListener('orientationchange', function () {
-    val.value = nxloading;
-    if (!isRunning) {
-        updatechart();
-    }
-}, false);
-
-function parseData(values, currency) {
     let arr = [];
     for (let i in values) {
         arr.push({
@@ -391,7 +323,21 @@ function parseData(values, currency) {
     return arr;
 }
 
-function drawChart(values, currency) {
+drawChart(values, currency) {
+const parseData = this.parseData.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,bband,macd,macdh,roc,rsi}=this.config;
+const svgvB=this.container, interval=this.state.interval, chartRoot=this.svg;
+const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     const limdata = 50,
         limidata = 20,
         macdhbinsl = 1500,
@@ -513,7 +459,7 @@ function drawChart(values, currency) {
         .x(xrx)
         .y(y);
 
-    const svg = d3.select('article svg')
+    const svg = this.svg
         .attr('preserveAspectRatio', 'xMinYMin meet')
         .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + ((macd || macdh) && (roc || rsi) ? height + margin.top + indicator.height * 2 + padding * 4 : (macd || macdh || roc || rsi ? height + margin.top + indicator.height + padding * 2 : height + margin.top)))
         .call(trendlines);
@@ -990,7 +936,7 @@ function drawChart(values, currency) {
                 event.preventDefault();
                 keep = true;
                 xy = d3.pointer(event);
-                path = d3.select('.trendlines')
+                path = chartRoot.select('.trendlines')
                     .append('path')
                     .attr('class', 'trend')
                     .attr('stroke', strc)
@@ -1008,7 +954,7 @@ function drawChart(values, currency) {
             .on('click',
                 function () {
                     keep = false;
-                    d3.selectAll('.trend')
+                    chartRoot.selectAll('.trend')
                         .on('mouseover',
                             function (event) {
                                 d3.select(event.currentTarget)
@@ -1027,17 +973,53 @@ function drawChart(values, currency) {
 }
 
 // round functions
-function roundn(number) {
+roundn(number) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     return Math.round((number + Number.EPSILON) * 100) / 100;
 }
 
-function roundx(number) {
+roundx(number) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     return Math.round((number + Number.EPSILON) * 10) / 10;
 }
 
 // technical analysis functions 
 // EMA SMA DEMA MACDH ROC RSI Bollinger Bands
-function EMA(data, range) {
+EMA(data, range) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     // if (!Array.isArray(data)) {
     //     console.log("Not an array");
     //     return 0;
@@ -1056,14 +1038,38 @@ function EMA(data, range) {
     }
     return e;
 }
-function average(data) {
+average(data) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     let len = data.length,
         i = -1,
         num = 0;
     while (++i < len) num += Number(data[i]);
     return num / len;
 }
-function SMA(data, range) {
+SMA(data, range) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     if (data.length < range) {
         console.log("SMA: Range greater than array length.");
         return [];
@@ -1076,7 +1082,19 @@ function SMA(data, range) {
     }
     return s;
 }
-function DEMA(data, range) {
+DEMA(data, range) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     if (data.length < range) {
         console.log("DEMA: Range greater than array length.");
         return [];
@@ -1085,7 +1103,19 @@ function DEMA(data, range) {
         secondEma = EMA(firstEma, range);
     return firstEma.map((x, i) => (2 * x) - secondEma[i]).filter(v => !Number.isNaN(v));
 }
-function MACD(data) {
+MACD(data) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+const {eshort,elong,esignal}=this.config;
     let emashort = EMA(data, eshort),
         emalong = EMA(data, elong),
         macdline = emashort.map((x, i) => x - emalong[i]).filter(v => !Number.isNaN(v)),
@@ -1099,7 +1129,19 @@ function MACD(data) {
     });
     return macd;
 }
-function ROC(data, N) {
+ROC(data, N) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     let i = 0,
         rc = 0,
         roc = [];
@@ -1120,7 +1162,19 @@ function ROC(data, N) {
     }
     return roc;
 }
-function RSI(data, N) {
+RSI(data, N) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+
     let i = 0,
         avg = 0,
         avl = 0,
@@ -1158,7 +1212,19 @@ function RSI(data, N) {
     }
     return rsi;
 }
-function bollingerband(data, N, K) {
+bollingerband(data, N, K) {
+const parseData = this.parseData.bind(this);
+const drawChart = this.drawChart.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+
     const bands = [];
     if (N <= 1) {
         console.log("BB: N period of moving average should be grater than 1.");
@@ -1177,25 +1243,13 @@ function bollingerband(data, N, K) {
     }
     return bands;
 }
-// bollinger band function
-// function bollingerband(data, N, K) {
-//     let i = 0, sum = 0, sum2 = 0;
-//     let bands = [];
-//     for (let n = Math.min(N - 1, data.length); i < n; ++i) {
-//         const value = data[i];
-//         sum += value; sum2 += Math.pow(value, 2);
-//     }
-//     for (let n = data.length; i < n; ++i) {
-//         const value = data[i];
-//         sum += value; sum2 += Math.pow(value, 2);
-//         const mean = sum / N,
-//             deviation = Math.sqrt((sum2 - Math.pow(sum, 2) / N) / (N - 1));
-//         bands.push({
-//             low: mean - (deviation * K),
-//             high: mean + (deviation * K)
-//         });
-//         const value0 = data[i - N + 1];
-//         sum -= value0; sum2 -= Math.pow(value0, 2);
-//     }
-//     return bands;
-// }
+
+}
+window.HistoricalPriceChart=HistoricalPriceChart;
+const startChart=()=>{
+window.historicalPriceChart?.destroy();
+window.historicalPriceChart=new HistoricalPriceChart();
+};
+window.cqu=()=>window.historicalPriceChart?.convertOrQuote();
+window.updatechart=()=>window.historicalPriceChart?.reloadData();
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',startChart,{once:true}); else startChart();
