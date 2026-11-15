@@ -96,27 +96,6 @@ class HistoricalPriceChart {
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
     this.zoomTransform = d3.zoomIdentity;
-    this.zoomControls = document.createElement('div');
-    this.zoomControls.className = 'chart-zoom-controls';
-    this.zoomControls.setAttribute('role', 'group');
-    this.zoomControls.setAttribute('aria-label', 'Zmadhimi i grafikut');
-    this.zoomControls.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0';
-    for (const [label, title, action] of [
-      ['+', 'Zmadho', () => this.svg.call(this.zoomBehavior.scaleBy, 1.5)],
-      ['−', 'Zvogëlo', () => this.svg.call(this.zoomBehavior.scaleBy, 1 / 1.5)],
-      ['Pamja e plotë', 'Rikthe pamjen e plotë', () => this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity)]
-    ]) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.textContent = label; button.title = title;
-      button.setAttribute('aria-label', title);
-      button.style.cssText = 'min-width:36px;min-height:36px;cursor:pointer';
-      this.zoomControls.appendChild(button);
-      this.listen(button, 'click', () => { if (this.zoomBehavior && !this.state.loading) action(); });
-    }
-    const hint = document.createElement('small');
-    hint.textContent = 'Rrota: zoom · Tërhiq: zhvendos · Dy klikime: rikthim';
-    this.zoomControls.appendChild(hint);
-    this.container.insertBefore(this.zoomControls, this.svg.node());
     this.destroyed = false;
     this.bindControls();
     this.ready = this.reloadData();
@@ -271,7 +250,6 @@ class HistoricalPriceChart {
     clearTimeout(this.layoutTimer);
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
-    this.zoomControls.remove();
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
     this.setLoading(false);
   }
