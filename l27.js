@@ -89,6 +89,7 @@ class HistoricalPriceChart {
   constructor(container = document.querySelector('article')) {
     if (!container) throw new Error('Mungon elementi article i grafikut.');
     this.container = container;
+    this.priceClipId = `price-clip-${HistoricalPriceChart.nextClipId = (HistoricalPriceChart.nextClipId || 0) + 1}`;
     this.svg = d3.select(container).selectAll('svg').data([null]).join('svg');
     this.currentData = [];
     this.config = {};
@@ -379,12 +380,12 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         MacdHist = macdh == true ? Macd.map(d => d.macdhist) : false,
         Roc = roc == true ? ROC(vdata, RC).map(r => r.roc) : false,
         Rsi = rsi == true ? RSI(vdata, RS).map(r => r.rsi) : false,
-        // scale Y
-        A = [vdata, (MA_a != false ? MA_a : []), (MA_b != false ? MA_b : []), (MA_c != false ? MA_c : []), (MA_d != false ? MA_d : []), (LowerBand != false ? LowerBand : []), UpperBand != false ? UpperBand : []],
-        MinA = A.map(a => Math.min.apply(null, a)),
-        MaxA = A.map(a => Math.max.apply(null, a)),
-        MinYScale = Math.min.apply(null, MinA),
-        MaxYScale = Math.max.apply(null, MaxA),
+        // Price-only bounds keep the scale stable when overlays are toggled.
+        MinYScale = d3.min(vdata),
+        MaxYScale = d3.max(vdata),
+        PricePadding = MaxYScale > MinYScale
+            ? (MaxYScale - MinYScale) * 0.05
+            : Math.max(Math.abs(MinYScale) * 0.01, 0.01),
         // scale MacdY
         MinSignal = macd == true ? d3.min(...MacdSignal) : false,
         MaxSignal = macd == true ? d3.max(...MacdSignal) : false,
@@ -422,9 +423,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
 
     let y = d3.scaleLinear()
-        .domain([MinYScale - 1, MaxYScale + 1])
-        .range([height - padding, margin.top])
-        .nice();
+        .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
+        .range([height - padding, margin.top]);
 
     // MACD
     let yMAxis = g => g
@@ -466,6 +466,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + ((macd || macdh) && (roc || rsi) ? height + margin.top + indicator.height * 2 + padding * 4 : (macd || macdh || roc || rsi ? height + margin.top + indicator.height + padding * 2 : height + margin.top)))
         .call(trendlines);
 
+    svg.append('defs').append('clipPath')
+        .attr('id', this.priceClipId)
+        .attr('clipPathUnits', 'userSpaceOnUse')
+        .append('rect')
+        .attr('x', Math.min(...x.range()))
+        .attr('y', margin.top)
+        .attr('width', Math.abs(x.range()[1] - x.range()[0]))
+        .attr('height', Math.max(0, height - padding - margin.top));
+
     svg.append('g')
         .call(xAxis)
         .attr('text-anchor', 'start');
@@ -493,6 +502,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     if (bband) {
         svg.append('g')
             .attr('class', 'abbc')
+            .attr('clip-path', `url(#${this.priceClipId})`)
             .selectAll('path')
             .data([BandData])
             .join('path')
@@ -505,6 +515,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.append('g')
         .attr('fill', 'none')
         .attr('class', 'dline')
+        .attr('clip-path', `url(#${this.priceClipId})`)
         .attr('stroke-linejoin', 'round')
         .attr('stroke-linecap', 'round')
         .attr('stroke-width', 1)
