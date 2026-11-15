@@ -180,6 +180,7 @@ class HistoricalPriceChart {
     if (this.destroyed) return;
     if (this.container.offsetWidth <= 0) { this.layoutPending = true; return; }
     this.layoutPending = false;
+    this.pointerCleanup?.();
     this.lastLayout = { width: this.container.offsetWidth, height: window.innerHeight };
     this.container.querySelector('[data-chart-error]')?.remove();
     const previousPlot = this.plotGeometry;
@@ -241,6 +242,60 @@ class HistoricalPriceChart {
     return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
   }
 
+  pointerSnapshot(pixel, dates, range, bounds, series) {
+    if (!dates.length || !Number.isFinite(pixel)) return null;
+    const last = dates.length - 1;
+    const step = last ? (range[1] - range[0]) / last : 0;
+    let index = 0;
+    if (step) {
+      const edges = bounds.map(p => (p - range[0]) / step);
+      const firstVisible = Math.max(0, Math.ceil(Math.min(...edges) - 1e-9));
+      const lastVisible = Math.min(last, Math.floor(Math.max(...edges) + 1e-9));
+      if (firstVisible > lastVisible) return null;
+      index = Math.max(firstVisible, Math.min(lastVisible, Math.round((pixel - range[0]) / step)));
+    }
+    const values = {};
+    for (const [name, data] of Object.entries(series)) {
+      const value = data?.[index];
+      values[name] = Number.isFinite(value) ? value : null;
+    }
+    return { index, date: dates[index], x: step ? range[0] + index * step : (range[0] + range[1]) / 2, values };
+  }
+
+  bindChartPointer(svg, paint, hide) {
+    const active = new Set();
+    const node = svg.node();
+    const release = id => {
+      if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id);
+    };
+    svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
+      if (event.type === 'pointerdown') {
+        if (event.button !== 0) { hide(); return; }
+        if (event.pointerType !== 'mouse') {
+          active.add(event.pointerId);
+          node.setPointerCapture?.(event.pointerId);
+          // Suppress compatibility mouse drag for pen/touch inspection.
+          event.preventDefault();
+        }
+      }
+      if (this.zooming || this.drawingTrend || active.size > 1 ||
+          (event.pointerType === 'mouse' && event.buttons)) { hide(); return; }
+      paint(event);
+    });
+    svg.on('pointerup.inspect pointercancel.inspect lostpointercapture.inspect', event => {
+      active.delete(event.pointerId);
+      release(event.pointerId);
+      if (event.pointerType !== 'mouse' || event.type !== 'pointerup') hide();
+    });
+    svg.on('pointerleave.inspect', hide);
+    this.pointerCleanup = () => {
+      svg.on('.inspect', null);
+      active.forEach(release); active.clear();
+      hide();
+      this.pointerCleanup = null;
+    };
+  }
+
   showError(message) {
     let node = this.container.querySelector('[data-chart-error]');
     if (!node) { node=document.createElement('p'); node.dataset.chartError=''; node.setAttribute('role','status'); this.container.appendChild(node); }
@@ -289,6 +344,7 @@ class HistoricalPriceChart {
     this.destroyed=true; this.state.requestId++;
     clearTimeout(this.layoutTimer);
     this.resizeObserver?.disconnect();
+    this.pointerCleanup?.();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
@@ -797,7 +853,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     }
 
     // crosshair
-    let crssh = svg.append('g'),
+    let crssh = svg.append('g').attr('pointer-events', 'none'),
         label = crssh.append('text'),
         crosshair = crssh.append('g')
             .attr('stroke-width', 0.5);
@@ -820,8 +876,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .attr('x', padding)
         .attr('y', margin.top)
         .attr('width', x.range()[0] - padding)
-        .attr('height', y.range()[0] - margin.top)
-        .on('pointerenter pointerout pointermove touchstart touchend touchmove', onin);
+        .attr('height', y.range()[0] - margin.top);
 
     // macd grid
     if (macd || macdh) {
@@ -832,8 +887,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             .attr('x', padding)
             .attr('y', indicator.top)
             .attr('width', x.range()[0] - padding)
-            .attr('height', yMacd.range()[0] - indicator.top)
-            .on('pointerenter pointerout pointermove touchstart touchend touchmove', onin);
+            .attr('height', yMacd.range()[0] - indicator.top);
     }
 
     // roc grid
@@ -845,8 +899,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             .attr('x', padding)
             .attr('y', (macd || macdh) ? ibottom.bottom + padding : indicator.top)
             .attr('width', x.range()[0] - padding)
-            .attr('height', (macd || macdh) ? yRoc.range()[0] - ibottom.bottom - padding : yRoc.range()[0] - indicator.top)
-            .on('pointerenter pointerout pointermove touchstart touchend touchmove', onin);
+            .attr('height', (macd || macdh) ? yRoc.range()[0] - ibottom.bottom - padding : yRoc.range()[0] - indicator.top);
     }
 
     // rsi grid
@@ -858,23 +911,11 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             .attr('x', padding)
             .attr('y', (macd || macdh) ? ibottom.bottom + padding : indicator.top)
             .attr('width', x.range()[0] - padding)
-            .attr('height', (macd || macdh) ? yRsi.range()[0] - ibottom.bottom - padding : yRsi.range()[0] - indicator.top)
-            .on('pointerenter pointerout pointermove touchstart touchend touchmove', onin);
+            .attr('height', (macd || macdh) ? yRsi.range()[0] - ibottom.bottom - padding : yRsi.range()[0] - indicator.top);
     }
 
-    function onin(event) {
-        if (event.type === 'pointerenter' || event.type === 'touchstart') {
-            crosshair.style('display', null);
-            label.style('display', null);
-        }
-        if (event.type === 'touchstart') {
-            crosshair.select('#crsy').style('display', 'none');
-            label.style('display', 'none');
-        }
-        if (event.type === 'touchmove') {
-            event.preventDefault();
-        }
-        if (event.type === 'pointerout' || event.type === 'touchend') {
+    function hidePointer() {
+            chart.state.pointerIndex = null;
             crosshair.style('display', 'none');
             label.style('display', 'none');
             lg.text(lglatest);
@@ -884,81 +925,73 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             if (roc || rsi) {
                 rsrclg.text(rrlglatest);
             }
-        }
-        if (event.type === 'pointermove') {
+    }
+    const pointerSeries = {
+        vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+        MacdLine: macd ? MacdLine[0] : null,
+        MacdSignal: macd ? MacdSignal[0] : null,
+        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi
+    };
+    function paintPointer(event) {
+            const [rawX, yval] = d3.pointer(event, svg.node());
+            const rsrcTop = (macd || macdh) ? ibottom.bottom + padding : indicator.top;
+            const panel = yval >= margin.top && yval <= y.range()[0] ? 'price'
+                : (macd || macdh) && yval >= indicator.top && yval <= yMacd.range()[0] ? 'macd'
+                : (roc || rsi) && yval >= rsrcTop && yval <= (roc ? yRoc : yRsi).range()[0] ? 'rsrc' : null;
+            if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
+            const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
+            if (!snapshot) { hidePointer(); return; }
+            chart.state.pointerIndex = snapshot.index;
+            const xval = snapshot.x, yVonx = snapshot.values;
             crosshair.style('display', null);
             label.style('display', null);
-            let xval,
-                yval,
-                pts = d3.pointers(event)[0];
-            xval = pts[0];
-            yval = pts[1];
 
             const sx = xval < width / 2 ? 1 : -1;
             const sy = yval < height / 2 ? 2 : -1;
-
-            let yVonx = {
-                vdata: vdata[ddata.indexOf(x.invert(xval))],
-                MA_a: MA_a[ddata.indexOf(x.invert(xval))],
-                MA_b: MA_b[ddata.indexOf(x.invert(xval))],
-                MA_c: MA_c[ddata.indexOf(x.invert(xval))],
-                MA_d: MA_d[ddata.indexOf(x.invert(xval))],
-                UpperBand: UpperBand[ddata.indexOf(x.invert(xval))],
-                LowerBand: LowerBand[ddata.indexOf(x.invert(xval))],
-                MacdLine: macd ? MacdLine[0][ddata.indexOf(x.invert(xval))] : null,
-                MacdSignal: macd ? MacdSignal[0][ddata.indexOf(x.invert(xval))] : null,
-                MacdHist: macdh ? MacdHist[0][ddata.indexOf(x.invert(xval))] : null,
-                Roc: Roc[ddata.indexOf(x.invert(xval))],
-                Rsi: Rsi[ddata.indexOf(x.invert(xval))]
-            }
+            const pointerFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
 
             function maintxt(_d, i) {
                 let formatdate = d3.timeFormat('%a, %d %b %Y'),
-                    fd = d3.format(','),
-                    txt_datenprice = formatdate(x.invert(xval)) + ', ' + currency + '/ALL: ' + fd(yVonx.vdata) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
-                    txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(roundn(yVonx.MA_a)) : '',
-                    txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(roundn(yVonx.MA_b)) : '',
-                    txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(roundn(yVonx.MA_c)) : '',
-                    txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(roundn(yVonx.MA_d)) : '',
+                    fd = pointerFormat,
+                    txt_datenprice = formatdate(snapshot.date) + ', ' + currency + '/ALL: ' + fd(yVonx.vdata) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
+                    txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(yVonx.MA_a) : '',
+                    txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(yVonx.MA_b) : '',
+                    txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(yVonx.MA_c) : '',
+                    txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(yVonx.MA_d) : '',
                     txt_upbb = !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(yVonx.UpperBand) : '',
                     txt_lobb = !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(yVonx.LowerBand) : '';
                 return [txt_datenprice, txt_ma_a, txt_ma_b, txt_ma_c, txt_ma_d, txt_upbb, txt_lobb].filter(x => x !== '')[i];
             }
 
             function macdtxt(_d, i) {
-                let fd = d3.format(','),
+                let fd = pointerFormat,
                     line = macd ? yVonx.MacdLine : 0,
                     signal = macd ? yVonx.MacdSignal : 0,
                     histogram = macdh ? yVonx.MacdHist : 0,
-                    txt_macdl = macd ? 'MACD Line: ' + fd(roundn(line)) : 0,
-                    txt_macds = macd ? 'MACD Signal: ' + fd(roundn(signal)) : 0,
-                    txt_macdh = macdh ? 'MACD Histogram: ' + fd(roundn(histogram)) : 0;
+                    txt_macdl = macd ? 'MACD Line: ' + fd(line) : 0,
+                    txt_macds = macd ? 'MACD Signal: ' + fd(signal) : 0,
+                    txt_macdh = macdh ? 'MACD Histogram: ' + fd(histogram) : 0;
                 return [txt_macdl, txt_macds, txt_macdh].filter(x => x != 0)[i];
             }
 
             function rrtxt(_d, i) {
-                let fd = d3.format(','),
-                    txt_roc = roc ? 'ROC: ' + fd(roundn(yVonx.Roc)) : 0,
-                    txt_rsi = rsi ? 'RSI: ' + fd(roundn(yVonx.Rsi)) : 0;
+                let fd = pointerFormat,
+                    txt_roc = roc ? 'ROC: ' + fd(yVonx.Roc) : 0,
+                    txt_rsi = rsi ? 'RSI: ' + fd(yVonx.Rsi) : 0;
                 return [txt_roc, txt_rsi].filter(x => x != 0)[i];
             }
 
             function linelabel() {
-                function str(e) {
-                    if (!e) return null
-                    return e.className.baseVal;
-                }
-                let et = str(event.target),
-                    fd = d3.format(',');
-                switch (et) {
-                    case 'rsrcgrid':
+                let fd = d3.format(',');
+                switch (panel) {
+                    case 'rsrc':
                         return roc && rsi ? 'ROC ' + roundx(yRoc.invert(yval)) + ' RSI ' + roundx(yRsi.invert(yval)) : (roc ? roundx(yRoc.invert(yval)) : (rsi ? roundx(yRsi.invert(yval)) : null));
                         break;
-                    case 'macdgrid':
+                    case 'macd':
                         return fd(roundx(yMacd.invert(yval)));
                         break;
                     default:
-                        return fd(roundx(y.invert(yval)));
+                        return d3.format(',.2f')(y.invert(yval));
                 }
             }
 
@@ -971,9 +1004,9 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
             // horizontal line
             crosshair.select('#crsy')
-                .attr('x1', padding)
+                .attr('x1', plotLeft)
                 .attr('y1', yval)
-                .attr('x2', width)
+                .attr('x2', plotRight)
                 .attr('y2', yval);
 
             label.text(linelabel)
@@ -994,8 +1027,9 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             if (roc || rsi) {
                 rsrclg.text(rrtxt);
             }
-        }
     }
+    hidePointer();
+    this.bindChartPointer(svg, paintPointer, hidePointer);
 
     // draw trendlines
     svg.append('g').attr('class', 'trend-viewport')
@@ -1031,21 +1065,20 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
         svg.select('.trendlines').attr('transform', `translate(${transform.x},0) scale(${transform.k},1)`);
-        crosshair.style('display', 'none'); label.style('display', 'none');
-        lg.text(lglatest);
-        if (macdlg) macdlg.text(macdlglatest);
-        if (rsrclg) rsrclg.text(rrlglatest);
+        hidePointer();
     };
     this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
         .constrain(constrain)
         .filter(event => !chart.drawingTrend && !event.altKey &&
             (!event.button || event.type === 'wheel') &&
             !event.target.closest?.('.trend') &&
-            (event.type === 'touchstart' || (() => {
+            (event.type === 'touchstart' ? event.touches.length >= 2 : (() => {
                 const [px, py] = d3.pointer(event, svg.node());
                 return px >= plotLeft && px <= plotRight && py >= margin.top;
             })()))
-        .on('zoom', event => updateZoom(constrain(event.transform)));
+        .on('start', () => { chart.zooming = true; hidePointer(); })
+        .on('zoom', event => updateZoom(constrain(event.transform)))
+        .on('end', () => { chart.zooming = false; });
     svg.style('touch-action', 'none').call(this.zoomBehavior)
         .on('dblclick.zoom', null)
         .on('dblclick.reset', event => {
