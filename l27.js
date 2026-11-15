@@ -98,6 +98,7 @@ class HistoricalPriceChart {
     this.zoomTransform = d3.zoomIdentity;
     this.destroyed = false;
     this.bindControls();
+    this.observeLayout();
     this.ready = this.reloadData();
   }
 
@@ -176,7 +177,12 @@ class HistoricalPriceChart {
   }
 
   render() {
+    if (this.destroyed) return;
+    if (this.container.offsetWidth <= 0) { this.layoutPending = true; return; }
+    this.layoutPending = false;
+    this.lastLayout = { width: this.container.offsetWidth, height: window.innerHeight };
     this.container.querySelector('[data-chart-error]')?.remove();
+    const previousPlot = this.plotGeometry;
     const trends = this.svg.select('.trendlines').node();
     if (trends) trends.remove();
     this.svg.selectAll('*').remove();
@@ -187,10 +193,52 @@ class HistoricalPriceChart {
     }
     this.drawChart(this.currentData, this.state.currency);
     if (trends) {
+      // Trend endpoints are stored in unzoomed plot coordinates.
+      if (previousPlot && this.plotGeometry) {
+        const nextPlot = this.plotGeometry;
+        const remap = (value, from, to) => to[0] + (value - from[0]) * (to[1] - to[0]) / (from[1] - from[0]);
+        d3.select(trends).selectAll('path').each(function (points) {
+          if (!Array.isArray(points)) return;
+          const resized = points.map(([px, py]) => [
+            remap(px, previousPlot.x, nextPlot.x), remap(py, previousPlot.y, nextPlot.y)
+          ]);
+          d3.select(this).datum(resized).attr('d', d3.line()(resized));
+        });
+      }
       this.svg.select('.trendlines').remove();
       this.svg.select('.trend-viewport').node().appendChild(trends);
       trends.setAttribute('transform', `translate(${this.zoomTransform.x},0) scale(${this.zoomTransform.k},1)`);
     }
+  }
+
+  observeLayout() {
+    const schedule = () => {
+      if (this.destroyed) return;
+      clearTimeout(this.layoutTimer);
+      this.layoutTimer = setTimeout(() => {
+        if (this.destroyed || this.container.offsetWidth <= 0) return;
+        const previous = this.lastLayout;
+        if (!this.layoutPending && previous && previous.width === this.container.offsetWidth && previous.height === window.innerHeight) return;
+        this.render();
+      }, 100);
+    };
+    // Observe width, not content height: adding panels must not create a resize loop.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(schedule);
+      this.resizeObserver.observe(this.container);
+    }
+    this.listen(window, 'resize', schedule);
+    this.listen(window, 'orientationchange', schedule);
+  }
+
+  resizeZoom(range) {
+    const oldRange = this.plotGeometry?.x;
+    const transform = this.zoomTransform;
+    if (!oldRange || oldRange[0] === oldRange[1]) return transform;
+    const ratio = (range[1] - range[0]) / (oldRange[1] - oldRange[0]);
+    const tx = range[0] * (1 - transform.k) +
+      (transform.x - oldRange[0] * (1 - transform.k)) * ratio;
+    return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
   }
 
   showError(message) {
@@ -219,14 +267,6 @@ class HistoricalPriceChart {
       else this.reloadData();
     });
     this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
-    this.listen(window,'orientationchange',()=>{
-      clearTimeout(this.layoutTimer);
-      this.layoutTimer=setTimeout(()=>{
-        if(this.destroyed)return;
-        this.svg.select('.trendlines').remove();
-        this.render();
-      },150);
-    });
   }
 
   closemenu() {
@@ -248,6 +288,7 @@ class HistoricalPriceChart {
   destroy() {
     this.destroyed=true; this.state.requestId++;
     clearTimeout(this.layoutTimer);
+    this.resizeObserver?.disconnect();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
@@ -431,6 +472,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .domain(ddata)
         .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
     const baseRange = x.range().slice();
+    this.zoomTransform = this.resizeZoom(baseRange);
     const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
     // Invert by observation index, not elapsed time (weekends remain gap-free).
     x.invert = pixel => {
@@ -447,6 +489,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     let y = d3.scaleLinear()
         .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
         .range([height - padding, margin.top]);
+    this.plotGeometry = { x: baseRange.slice(), y: y.range().slice() };
 
     // MACD
     let yMAxis = g => g
@@ -1026,6 +1069,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 xy[0] = chart.zoomTransform.invertX(xy[0]);
                 path = chartRoot.select('.trendlines')
                     .append('path')
+                    .datum([xy, xy])
                     .attr('class', 'trend')
                     .attr('stroke', strc)
                     .attr('stroke-width', 2)
@@ -1038,7 +1082,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                     if (keep) {
                         xx = d3.pointer(event).map(x => x - 1);
                         xx[0] = chart.zoomTransform.invertX(xx[0]);
-                        path.attr('d', line([xy, xx]));
+                        path.datum([xy, xx]).attr('d', line([xy, xx]));
                     }
                 })
             .on('click',
