@@ -95,6 +95,7 @@ class HistoricalPriceChart {
     this.priceClipId = `price-clip-${HistoricalPriceChart.nextClipId = (HistoricalPriceChart.nextClipId || 0) + 1}`;
     this.svg = d3.select(container).selectAll('svg').data([null]).join('svg');
     this.currentData = [];
+    this.calculationCache = null;
     this.config = {};
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
@@ -167,6 +168,7 @@ class HistoricalPriceChart {
       const rows = await window.ForexData.query('q?'+new URLSearchParams(params));
       if (this.destroyed || requestId !== this.state.requestId) return;
       this.currentData = this.parseData(rows, params.c);
+      this.calculationCache = null;
       this.zoomTransform = d3.zoomIdentity;
       this.state.currency = params.c;
       this.state.interval = params.i;
@@ -189,6 +191,66 @@ class HistoricalPriceChart {
     if (this.destroyed) return;
     this.readIndicators();
     this.render();
+  }
+
+  prepareChartData(values) {
+    const cached = this.calculationCache;
+    // Compare the snapshot too: callers may edit a row in place. A date, value,
+    // order or length change must never reuse stale indicator calculations.
+    if (cached && cached.source === values && cached.vdata.length === values.length &&
+        values.every((row, i) => Object.is(+row.value, cached.vdata[i]) && Object.is(+row.date, cached.ddata[i]))) return cached;
+    const vdata = Float64Array.from(values, row => row.value);
+    const ddata = Float64Array.from(values, row => row.date);
+    this.calculationCache = {
+      source: values, vdata, ddata,
+      min: d3.min(vdata), max: d3.max(vdata), series: new Map()
+    };
+    return this.calculationCache;
+  }
+
+  cachedIndicator(cache, parameters, calculate) {
+    const key = JSON.stringify(parameters);
+    if (cache.series.has(key)) {
+      const result = cache.series.get(key);
+      cache.series.delete(key); cache.series.set(key, result);
+      return result;
+    }
+    const result = calculate();
+    cache.series.set(key, result);
+    // Bound memory when users try many different indicator periods.
+    if (cache.series.size > 32) cache.series.delete(cache.series.keys().next().value);
+    return result;
+  }
+
+  indicatorSeries(values) {
+    const cache = this.prepareChartData(values), data = cache.vdata, c = this.config;
+    const enabled = {
+      bband: data.length >= 50 && c.bband, macd: data.length >= 50 && c.macd,
+      macdh: data.length >= 50 && c.macdh, roc: data.length >= 20 && c.roc,
+      rsi: data.length >= 20 && c.rsi
+    };
+    const memo = (parameters, calculate) => this.cachedIndicator(cache, parameters, calculate);
+    const ma = suffix => !isNaN(c['ma_' + suffix])
+      ? memo(['ma', c['mma_' + suffix], c['ma_' + suffix]], () => this.SwMA(c['mma_' + suffix], data, c['ma_' + suffix])) : false;
+    const bands = enabled.bband ? memo(['bb', c.N, c.K], () => {
+      const result = this.bollingerband(data, c.N, c.K);
+      return { data: result, lower: result.map(d => d.low), upper: result.map(d => d.high) };
+    }) : null;
+    // MACD line, signal and histogram share one calculation and parameter key.
+    const macd = enabled.macd || enabled.macdh ? memo(['macd', c.eshort, c.elong, c.esignal], () => {
+      const result = this.MACD(data);
+      return { data: result, line: result.map(d => d.macdline), signal: result.map(d => d.macdsignal), histogram: result.map(d => d.macdhist) };
+    }) : null;
+    return {
+      vdata: data, ddata: cache.ddata, min: cache.min, max: cache.max, enabled,
+      BandData: bands ? bands.data : false, LowerBand: bands ? bands.lower : false, UpperBand: bands ? bands.upper : false,
+      MA_a: ma('a'), MA_b: ma('b'), MA_c: ma('c'), MA_d: ma('d'),
+      Macd: macd ? macd.data : false,
+      MacdLine: enabled.macd ? macd.line : false, MacdSignal: enabled.macd ? macd.signal : false,
+      MacdHist: enabled.macdh ? macd.histogram : false,
+      Roc: enabled.roc ? memo(['roc', c.RC], () => this.ROC(data, c.RC).map(d => d.roc)) : false,
+      Rsi: enabled.rsi ? memo(['rsi', c.RS], () => this.RSI(data, c.RS).map(d => d.rsi)) : false
+    };
   }
 
   render() {
@@ -661,6 +723,7 @@ class HistoricalPriceChart {
 
   destroy() {
     this.finishTrendEdit(false, false);
+    this.calculationCache = null;
     this.destroyed=true; this.state.requestId++;
     this.infoRequestId++;
     this.infoAbort?.abort();
@@ -774,7 +837,6 @@ const svgvB=this.container, interval=this.state.interval, chart=this;
 this.drawingTrend = Boolean(this.trendDraft);
 const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     const limdata = 50,
-        limidata = 20,
         macdhbinsl = 1500,
         macdhbinsm = 900,
         minwidth = 300, // screen
@@ -789,34 +851,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         indicator = { top: height, height: 90 },
         ibottom = { bottom: indicator.top + indicator.height + padding };
 
-    let vdata = Float64Array.from(values.map(d => d.value)),
-        ddata = Float64Array.from(values.map(d => d.date)),
-        xrx = (_d, i) => x(ddata[i]);
+    const series = this.indicatorSeries(values);
+    const { vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
+        MacdLine, MacdSignal, MacdHist, Roc, Rsi } = series;
+    ({ bband, macd, macdh, roc, rsi } = series.enabled);
+    const xrx = (_d, i) => x(ddata[i]);
 
-    const vlength = vdata.length;
-
-    bband = vlength < limdata ? false : bband;
-    macd = vlength < limdata ? false : macd;
-    macdh = vlength < limdata ? false : macdh;
-    roc = vlength < limidata ? false : roc;
-    rsi = vlength < limidata ? false : rsi;
-
-    let BandData = bband == true ? bollingerband(vdata, N, K) : false,
-        LowerBand = bband == true ? BandData.map(d => d.low) : false,
-        UpperBand = bband == true ? BandData.map(d => d.high) : false,
-        MA_a = !isNaN(ma_a) ? SwMA(mma_a, vdata, ma_a) : false,
-        MA_b = !isNaN(ma_b) ? SwMA(mma_b, vdata, ma_b) : false,
-        MA_c = !isNaN(ma_c) ? SwMA(mma_c, vdata, ma_c) : false,
-        MA_d = !isNaN(ma_d) ? SwMA(mma_d, vdata, ma_d) : false,
-        Macd = macd || macdh == true ? MACD(vdata) : false,
-        MacdLine = macd == true ? Macd.map(d => d.macdline) : false,
-        MacdSignal = macd == true ? Macd.map(d => d.macdsignal) : false,
-        MacdHist = macdh == true ? Macd.map(d => d.macdhist) : false,
-        Roc = roc == true ? ROC(vdata, RC).map(r => r.roc) : false,
-        Rsi = rsi == true ? RSI(vdata, RS).map(r => r.rsi) : false,
-        // Price-only bounds keep the scale stable when overlays are toggled.
-        MinYScale = d3.min(vdata),
-        MaxYScale = d3.max(vdata),
+    // Price-only bounds keep the scale stable when overlays are toggled.
+    let MinYScale = series.min,
+        MaxYScale = series.max,
         PricePadding = MaxYScale > MinYScale
             ? (MaxYScale - MinYScale) * 0.05
             : Math.max(Math.abs(MinYScale) * 0.01, 0.01),
