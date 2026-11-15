@@ -407,6 +407,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     let yAxis = g => g
         .attr('transform', 'translate(' + width + ', 0)')
         .call(d3.axisRight(y)
+            .tickFormat(d3.format(",.2f"))
             .tickSizeOuter(0));
 
     let xAxis = g => g
