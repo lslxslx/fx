@@ -95,6 +95,28 @@ class HistoricalPriceChart {
     this.config = {};
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
+    this.zoomTransform = d3.zoomIdentity;
+    this.zoomControls = document.createElement('div');
+    this.zoomControls.className = 'chart-zoom-controls';
+    this.zoomControls.setAttribute('role', 'group');
+    this.zoomControls.setAttribute('aria-label', 'Zmadhimi i grafikut');
+    this.zoomControls.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0';
+    for (const [label, title, action] of [
+      ['+', 'Zmadho', () => this.svg.call(this.zoomBehavior.scaleBy, 1.5)],
+      ['−', 'Zvogëlo', () => this.svg.call(this.zoomBehavior.scaleBy, 1 / 1.5)],
+      ['Pamja e plotë', 'Rikthe pamjen e plotë', () => this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity)]
+    ]) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.textContent = label; button.title = title;
+      button.setAttribute('aria-label', title);
+      button.style.cssText = 'min-width:36px;min-height:36px;cursor:pointer';
+      this.zoomControls.appendChild(button);
+      this.listen(button, 'click', () => { if (this.zoomBehavior && !this.state.loading) action(); });
+    }
+    const hint = document.createElement('small');
+    hint.textContent = 'Rrota: zoom · Tërhiq: zhvendos · Dy klikime: rikthim';
+    this.zoomControls.appendChild(hint);
+    this.container.insertBefore(this.zoomControls, this.svg.node());
     this.destroyed = false;
     this.bindControls();
     this.ready = this.reloadData();
@@ -152,6 +174,7 @@ class HistoricalPriceChart {
       const rows = await window.ForexData.query('q?'+new URLSearchParams(params));
       if (this.destroyed || requestId !== this.state.requestId) return;
       this.currentData = this.parseData(rows, params.c);
+      this.zoomTransform = d3.zoomIdentity;
       this.state.currency = params.c;
       this.state.interval = params.i;
       // Trendlines currently use pixels; do not carry them across datasets.
@@ -178,11 +201,16 @@ class HistoricalPriceChart {
     const trends = this.svg.select('.trendlines').node();
     if (trends) trends.remove();
     this.svg.selectAll('*').remove();
-    if (!this.currentData.length) { this.showError('Nuk ka të dhëna për intervalin e zgjedhur.'); return; }
+    if (!this.currentData.length) {
+      this.zoomBehavior = null;
+      this.svg.on('.zoom', null).on('dblclick.reset', null);
+      this.showError('Nuk ka të dhëna për intervalin e zgjedhur.'); return;
+    }
     this.drawChart(this.currentData, this.state.currency);
     if (trends) {
       this.svg.select('.trendlines').remove();
-      this.svg.node().appendChild(trends);
+      this.svg.select('.trend-viewport').node().appendChild(trends);
+      trends.setAttribute('transform', `translate(${this.zoomTransform.x},0) scale(${this.zoomTransform.k},1)`);
     }
   }
 
@@ -242,6 +270,8 @@ class HistoricalPriceChart {
     this.destroyed=true; this.state.requestId++;
     clearTimeout(this.layoutTimer);
     this.listeners.forEach(remove=>remove()); this.listeners=[];
+    this.svg.on('.zoom', null).on('dblclick.reset', null);
+    this.zoomControls.remove();
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
     this.setLoading(false);
   }
@@ -337,7 +367,8 @@ const ROC = this.ROC.bind(this);
 const RSI = this.RSI.bind(this);
 const bollingerband = this.bollingerband.bind(this);
 let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,bband,macd,macdh,roc,rsi}=this.config;
-const svgvB=this.container, interval=this.state.interval, chartRoot=this.svg;
+const svgvB=this.container, interval=this.state.interval, chartRoot=this.svg, chart=this;
+this.drawingTrend = false;
 const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     const limdata = 50,
         limidata = 20,
@@ -415,12 +446,25 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .attr('transform', 'translate(0,' + ((macd || macdh) && (roc || rsi) ? ibottom.bottom + padding + indicator.height + padding * 2 : (macd || macdh || roc || rsi ? ibottom.bottom + padding : height)) + ')')
         .call(d3.axisBottom(x)
             .tickSizeOuter(0)
-            .tickValues(ddata.filter((_d, i) => !(i % (Math.round(200 * datalength / width)))))
-            .tickFormat(tformat));
+            .tickValues(visibleTicks())
+            .tickFormat(date => (datalength / (chart.zoomTransform?.k || 1) < limdata ? format.daily : tformat)(date)));
 
     let x = d3.scalePoint()
         .domain(ddata)
         .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
+    const baseRange = x.range().slice();
+    const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
+    // Invert by observation index, not elapsed time (weekends remain gap-free).
+    x.invert = pixel => {
+        const range = x.range();
+        const index = datalength < 2 ? 0 : Math.round((pixel - range[0]) / (range[1] - range[0]) * (datalength - 1));
+        return ddata[Math.max(0, Math.min(datalength - 1, index))];
+    };
+    function visibleTicks() {
+        const visible = Array.from(ddata).filter(date => x(date) >= plotLeft - 0.5 && x(date) <= plotRight + 0.5);
+        const step = Math.max(1, Math.ceil(visible.length / Math.max(2, Math.floor((plotRight - plotLeft) / 140))));
+        return visible.filter((_d, i) => i % step === 0);
+    }
 
     let y = d3.scaleLinear()
         .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
@@ -476,6 +520,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .attr('height', Math.max(0, height - padding - margin.top));
 
     svg.append('g')
+        .attr('class', 'date-axis')
         .call(xAxis)
         .attr('text-anchor', 'start');
 
@@ -615,6 +660,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
         if (macdh) {
             svg.append('g')
+                .attr('class', 'zoom-histogram')
                 .selectAll('rect')
                 .data(...MacdHist)
                 .join('rect')
@@ -629,6 +675,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
         if (macd) {
             svg.append('g')
+                .attr('class', 'zoom-macd')
                 .attr('fill', 'none')
                 .attr('stroke-linejoin', 'round')
                 .attr('stroke-linecap', 'round')
@@ -668,6 +715,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             .call(yRCAxis);
 
         svg.append('g')
+            .attr('class', 'zoom-roc')
             .attr('fill', 'none')
             .attr('stroke-linejoin', 'round')
             .attr('stroke-linecap', 'round')
@@ -691,6 +739,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             .call(yRAxis);
 
         svg.append('g')
+            .attr('class', 'zoom-rsi')
             .attr('fill', 'none')
             .attr('stroke-linejoin', 'round')
             .attr('stroke-linecap', 'round')
@@ -816,6 +865,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             }
         }
         if (event.type === 'pointermove') {
+            crosshair.style('display', null);
+            label.style('display', null);
             let xval,
                 yval,
                 pts = d3.pointers(event)[0];
@@ -824,16 +875,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
             const sx = xval < width / 2 ? 1 : -1;
             const sy = yval < height / 2 ? 2 : -1;
-
-            // new function x.invert for scalePoint
-            x.invert = (function () {
-                let domain = x.domain().reverse(),
-                    range = x.range();
-                let scale = d3.scaleQuantile().domain(range).range(domain);
-                return function (x) {
-                    return scale(x)
-                }
-            })();
 
             let yVonx = {
                 vdata: vdata[ddata.indexOf(x.invert(xval))],
@@ -936,8 +977,62 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     }
 
     // draw trendlines
-    svg.append('g')
+    svg.append('g').attr('class', 'trend-viewport')
+        .attr('clip-path', `url(#${this.priceClipId})`).append('g')
         .attr('class', 'trendlines');
+
+    // Update only geometry during gestures; indicator values remain calculated
+    // from the complete history, so zoom does not restart their warm-up periods.
+    const lowerClipId = this.priceClipId + '-indicators';
+    svg.select('defs').append('clipPath').attr('id', lowerClipId)
+        .append('rect').attr('x', plotLeft).attr('y', indicator.top)
+        .attr('width', plotRight - plotLeft)
+        .attr('height', indicator.height * 2 + padding * 4);
+    svg.selectAll('.zoom-macd, .zoom-histogram, .zoom-roc, .zoom-rsi')
+        .attr('clip-path', `url(#${lowerClipId})`);
+    const extent = [[plotLeft, margin.top], [plotRight, height - padding]];
+    const maxZoom = Math.max(1, Math.min(100, (datalength - 1) / 9));
+    const constrain = transform => {
+        const k = Math.max(1, Math.min(maxZoom, transform.k));
+        const tx = Math.max(plotRight * (1 - k), Math.min(plotLeft * (1 - k), transform.x));
+        return d3.zoomIdentity.translate(tx, 0).scale(k);
+    };
+    const updateZoom = transform => {
+        chart.zoomTransform = transform;
+        x.range(baseRange.map(pixel => transform.applyX(pixel)));
+        svg.select('.dline').selectAll('path').attr('d', line);
+        svg.select('.abbc').selectAll('path').attr('d', d3.area().x(xrx)
+            .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low)));
+        svg.select('.zoom-macd').selectAll('path').attr('d', d3.line().x(xrx).y(yMacd));
+        svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().x(xrx).y(yRoc));
+        svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().x(xrx).y(yRsi));
+        svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx);
+        svg.select('.date-axis').call(xAxis).select('.domain')
+            .attr('d', `M${plotLeft},0.5H${plotRight}`);
+        svg.select('.trendlines').attr('transform', `translate(${transform.x},0) scale(${transform.k},1)`);
+        crosshair.style('display', 'none'); label.style('display', 'none');
+        lg.text(lglatest);
+        if (macdlg) macdlg.text(macdlglatest);
+        if (rsrclg) rsrclg.text(rrlglatest);
+    };
+    this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
+        .constrain(constrain)
+        .filter(event => !chart.drawingTrend && !event.altKey &&
+            (!event.button || event.type === 'wheel') &&
+            !event.target.closest?.('.trend') &&
+            (event.type === 'touchstart' || (() => {
+                const [px, py] = d3.pointer(event, svg.node());
+                return px >= plotLeft && px <= plotRight && py >= margin.top;
+            })()))
+        .on('zoom', event => updateZoom(constrain(event.transform)));
+    svg.style('touch-action', 'none').call(this.zoomBehavior)
+        .on('dblclick.zoom', null)
+        .on('dblclick.reset', event => {
+            if (chart.drawingTrend) return;
+            event.preventDefault();
+            svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
+        });
+    svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
 
     // trendlines function
     function trendlines(selection) {
@@ -948,12 +1043,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             function (event) {
                 event.preventDefault();
                 keep = true;
+                chart.drawingTrend = true;
                 xy = d3.pointer(event);
+                xy[0] = chart.zoomTransform.invertX(xy[0]);
                 path = chartRoot.select('.trendlines')
                     .append('path')
                     .attr('class', 'trend')
                     .attr('stroke', strc)
                     .attr('stroke-width', 2)
+                    .attr('vector-effect', 'non-scaling-stroke')
                     .attr('stroke-linecap', 'round')
                     .attr('d', line([xy, xy]));
             })
@@ -961,12 +1059,14 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 function (event) {
                     if (keep) {
                         xx = d3.pointer(event).map(x => x - 1);
+                        xx[0] = chart.zoomTransform.invertX(xx[0]);
                         path.attr('d', line([xy, xx]));
                     }
                 })
             .on('click',
                 function () {
                     keep = false;
+                    chart.drawingTrend = false;
                     chartRoot.selectAll('.trend')
                         .on('mouseover',
                             function (event) {
