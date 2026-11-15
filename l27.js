@@ -1,3 +1,88 @@
+// GitHub Pages adaptation: JSON files in ./data/, no backend required.
+/* Local replacement for q/cq. Does not intercept global fetch. */
+window.ForexData = (() => {
+  const codes = ['EUR','USD','GBP','CHF','XAU','XAG','JPY','AUD','CAD'];
+  const cache = new Map();
+  function statusNode() { return document.getElementById('data-status') || {}; }
+  const iso = date => date.toISOString().slice(0,10);
+  async function load(code) {
+    if (!codes.includes(code)) throw new Error('Valutë e panjohur');
+    if (!cache.has(code)) cache.set(code, fetch(`./data/${code.toLowerCase()}.json`).then(r => {
+      if (!r.ok) throw new Error(`Nuk u lexua ${code}: ${r.status}`);
+      return r.json();
+    }).then(rows => rows.slice().sort((a,b)=>b.Data.localeCompare(a.Data))).catch(e=>{cache.delete(code);throw e;}));
+    return cache.get(code);
+  }
+  function period(date, interval) {
+    const d = new Date(date+'T00:00:00Z');
+    if (interval==='wave') {
+      // Match SQL DATEDIFF(WEEK): Sunday-start week, Friday label.
+      d.setUTCDate(d.getUTCDate()-d.getUTCDay()+5);
+    } else if (interval==='mave') {
+      d.setUTCDate(1); d.setUTCDate(31);
+    } else if (interval==='quave') {
+      d.setUTCDate(1); d.setUTCMonth(Math.floor(d.getUTCMonth()/3)*3); d.setUTCDate(31);
+    }
+    return iso(d);
+  }
+  async function query(url) {
+    const p=new URL(url,location.href).searchParams;
+    const c=(p.get('c')||'EUR').toUpperCase();
+    const rows=await load(c);
+    const end=p.get('td')||iso(new Date());
+    let start=p.get('fd');
+    if(!start) {
+      const months=Number(p.get('ix')||12);
+      const d=new Date(end+'T00:00:00Z'); const day=d.getUTCDate();
+      d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth()-months);
+      const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();
+      d.setUTCDate(Math.min(day,last)); start=months===0?'1991-01-01':iso(d);
+    }
+    let result=rows.filter(r=>r.Data>=start&&r.Data<=end&&Number.isFinite(r[c]));
+    const interval=p.get('i');
+    if(['wave','mave','quave'].includes(interval)) {
+      const groups=new Map();
+      for(const r of result) {const key=period(r.Data,interval); const g=groups.get(key)||{sum:0,n:0};g.sum+=r[c];g.n++;groups.set(key,g);}
+      result=Array.from(groups,([Data,g])=>({Data,[c]:Math.round(g.sum/g.n*100)/100})).sort((a,b)=>b.Data.localeCompare(a.Data));
+    }
+    if(p.get('o')==='asc') result=result.slice().reverse();
+    statusNode().textContent=`Version testimi — ${c}: ${result.length} regjistrime. Burimi lokal deri më ${rows[0]?.Data||'—'}.`;
+    return result;
+  }
+  async function convert(input) {
+    const m=input.trim().match(/^(\d+(?:[.,]\d+)?)\s+([A-Za-z]{3})\s+([A-Za-z]{3})$/);
+    if(!m) return {R:'E',Error:'Formati: 100.5 EUR ALL'};
+    const from=m[2].toUpperCase(),to=m[3].toUpperCase();
+    if(![...codes,'ALL'].includes(from)||![...codes,'ALL'].includes(to)) return {R:'E',Error:'Valutë e pambështetur.'};
+    const a=from==='ALL'?null:(await load(from))[0];
+    const b=to==='ALL'?null:(await load(to))[0];
+    if(a&&b&&a.Data!==b.Data) return {R:'E',Error:'Kurset më të fundit kanë data të ndryshme.'};
+    const rate=(r,c)=>r?r[c]/(c==='JPY'?100:1):1;
+    return {R:'X',Amount:Number(m[1].replace(',','.')),Sell:from,Buy:to,Exchange:rate(a,from)/rate(b,to),Source:`Bank of Albania — JSON ${a?.Data||b?.Data||''}`};
+  }
+  async function summary() {
+    try {
+      const latest = {};
+      await Promise.all(codes.map(async c => {
+        const rows=await load(c);
+        if(!rows.length) return;
+        latest[c]={current:rows[0],previous:rows[1]||rows[0],unit:c==='JPY'?100:1};
+        const row=latest[c], value=row.current[c], before=row.previous[c], delta=value-before;
+        const label=document.querySelector('label[for="'+c+'"]');
+        if(!label) return;
+        const items=label.querySelectorAll('i');
+        if(items[0]) {items[0].textContent=value;items[0].className=delta>0?'grc':'rec';}
+        if(items[1]) items[1].textContent=before?(100*delta/before).toFixed(2)+'%':'—';
+        if(items[2]) items[2].textContent=delta.toFixed(2);
+        label.title=row.current.Data+'; njësi: '+row.unit;
+      }));
+      if(document.getElementById('currency') && latest.EUR) document.getElementById('currency').dataset.abbr='Updated: '+latest.EUR.current.Data;
+    } catch(e) {statusNode().textContent='Përmbledhja nuk u ngarkua: '+e.message;}
+  }
+  document.addEventListener('DOMContentLoaded',summary);
+  return {query,convert,load};
+})();
+
 // (C) luislamani, 112020.112022.324
 
 // global
@@ -157,7 +242,7 @@ function cqu() {
     let q = document.getElementById('q').value,
         cqr = document.getElementById('cqr'),
         cq = 'cq?q=' + q;
-    fetch(cq, options)
+    ForexData.convert(q).then(values => ({ json: () => Promise.resolve(values) }))
         .then(function (response) { return response.json(); })
         .then(function (values) {
             cqr.innerText = null;
@@ -178,7 +263,7 @@ function cqu() {
                     return cqr.innerText = null;
             }
         })
-        .catch(function (err) { console.log(err); })
+        .catch(function (err) { console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message; })
 }
 // end
 
@@ -196,10 +281,10 @@ let ma_a = parseInt(document.getElementById('ma_a').value.match(/\d+/g), 10),
     ma_b = parseInt(document.getElementById('ma_b').value.match(/\d+/g), 10),
     ma_c = parseInt(document.getElementById('ma_c').value.match(/\d+/g), 10),
     ma_d = parseInt(document.getElementById('ma_d').value.match(/\d+/g), 10),
-    mma_a = !isNaN(ma_a) ? ma_a.toString().charAt(0) : null,
-    mma_b = !isNaN(ma_b) ? ma_b.toString().charAt(0) : null,
-    mma_c = !isNaN(ma_c) ? ma_c.toString().charAt(0) : null,
-    mma_d = !isNaN(ma_d) ? ma_d.toString().charAt(0) : null,
+    mma_a = !isNaN(ma_a) ? document.getElementById('ma_a').value.charAt(0).toUpperCase() : null,
+    mma_b = !isNaN(ma_b) ? document.getElementById('ma_b').value.charAt(0).toUpperCase() : null,
+    mma_c = !isNaN(ma_c) ? document.getElementById('ma_c').value.charAt(0).toUpperCase() : null,
+    mma_d = !isNaN(ma_d) ? document.getElementById('ma_d').value.charAt(0).toUpperCase() : null,
     // default values first load
     N = 20, // N period of moving average
     K = 2, // K * n-period standard deviation above/below moving average
@@ -249,7 +334,7 @@ function updatechart() {
     RS = !isNaN(parseInt(document.getElementById('rsi_values').value, 10)) ? document.getElementById('rsi_values').value : 14;
 
     d3.select('article').append('svg');
-    fetch(url, options)
+    ForexData.query(url).then(values => ({ json: () => Promise.resolve(values) }))
         .then(function (response) { return response.json(); })
         .then(function (values) {
             let parsedData = parseData(values, currency);
@@ -259,7 +344,7 @@ function updatechart() {
             drawChart(parsedData, currency);
         })
         .catch(function (err) {
-            console.log(err);
+            console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message;
             isRunning = false;
         });
 }
@@ -269,7 +354,7 @@ document.addEventListener('DOMContentLoaded', function () {
     val.value = nxloading;
     val.disabled = true;
     isRunning = true;
-    fetch(url, options)
+    ForexData.query(url).then(values => ({ json: () => Promise.resolve(values) }))
         .then(function (response) { return response.json(); })
         .then(function (values) {
             let pdata = parseData(values, currency);
@@ -278,7 +363,7 @@ document.addEventListener('DOMContentLoaded', function () {
             isRunning = false;
             drawChart(pdata, currency);
         })
-        .catch(function (err) { console.log(err); });
+        .catch(function (err) { console.error(err); val.disabled = false; val.value = nxupdate; isRunning = false; (document.getElementById('data-status') || {}).textContent = 'Gabim: ' + err.message; });
 
     // update chart and close "menu"
     document.getElementById('update').addEventListener('click', () => {
