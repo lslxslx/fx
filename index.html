@@ -1,0 +1,168 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+    <title>Technical analysis chart</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, user-scalable=yes">
+    <meta name="description" content="Technical analysis chart and financial data.">
+    <meta name="author" content="ルイス L.">
+    <meta name="keywords" content="forex, albania, eur, usd, gbp, chf, xau, xag, chart, technical, analysis, financial, market">
+    <meta name="robots" content="index,nofollow">
+    <meta name="format-detection" content="telephone=no">
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Technical analysis chart">
+    
+    <meta name="msapplication-TileColor" content="#efefef">
+    <meta property="og:title" content="Technical analysis chart">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Technical analysis chart">
+    
+    <link rel="stylesheet" type="text/css" href="./css/l.css">
+    <script src="https://d3js.org/d3.v7.min.js" type="text/javascript"></script>
+</head>
+
+<body>
+    <main role="main">
+<p id="data-status" role="status">Version testimi — të dhëna historike.</p>
+        
+        <noscript>&bowtie; JavaScript is disabled!</noscript>
+        <section>
+        <menu>
+            <a href="./" title="Technical analysis chart - l.seeiesd.org">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26px" height="26px"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+            </a>
+            <input type="checkbox" id="menu">
+            <label for="menu" data-abbr="Menu" data-long="Converter"></label>
+            <input type="button" id="update" title="Reload chart">
+            <div id="cpanel">
+                <div id="converter">
+                    <details>
+                        <summary data-abbr="Converter ?"></summary>
+                        <p>To convert (source: Bank of Albania): <code>{amount}</code> <code>{sell symbol}</code>
+                    <code>{buy symbol}</code>
+                    <br>
+                    e.g. to convert 100.5 Euro in Albanian Lek (exchange rate from Bank of Albania):
+                    <code>100.5 EUR ALL</code><br>
+                    
+                    </p>
+                    </details>
+                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL &crarr;"
+                        onkeydown="if (event.key == 'Enter') { cqu();}" />
+                    <span id="cqr"></span>
+                </div>
+<div id="currency" data-long="Currencies" data-abbr="Historical data"><input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR">EUR<i data-rate="EUR">…</i><i data-percent="EUR"></i><i data-change="EUR"></i></label>
+<input type="radio" name="currency" id="USD" value="USD" ><label for="USD">USD<i data-rate="USD">…</i><i data-percent="USD"></i><i data-change="USD"></i></label>
+<input type="radio" name="currency" id="GBP" value="GBP" ><label for="GBP">GBP<i data-rate="GBP">…</i><i data-percent="GBP"></i><i data-change="GBP"></i></label>
+<input type="radio" name="currency" id="CHF" value="CHF" ><label for="CHF">CHF<i data-rate="CHF">…</i><i data-percent="CHF"></i><i data-change="CHF"></i></label>
+<input type="radio" name="currency" id="XAU" value="XAU" ><label for="XAU">XAU<i data-rate="XAU">…</i><i data-percent="XAU"></i><i data-change="XAU"></i></label>
+<input type="radio" name="currency" id="XAG" value="XAG" ><label for="XAG">XAG<i data-rate="XAG">…</i><i data-percent="XAG"></i><i data-change="XAG"></i></label>
+<input type="radio" name="currency" id="JPY" value="JPY" ><label for="JPY">JPY<i data-rate="JPY">…</i><i data-percent="JPY"></i><i data-change="JPY"></i></label>
+<input type="radio" name="currency" id="AUD" value="AUD" ><label for="AUD">AUD<i data-rate="AUD">…</i><i data-percent="AUD"></i><i data-change="AUD"></i></label>
+<input type="radio" name="currency" id="CAD" value="CAD" ><label for="CAD">CAD<i data-rate="CAD">…</i><i data-percent="CAD"></i><i data-change="CAD"></i></label></div>
+                <div id="interval" data-long="Interval">
+                    <input type="radio" name="interval" id="daily" value="daily" checked>
+                    <label for="daily" data-abbr="D" data-long="Daily"></label>
+                    <input type="radio" name="interval" id="weekly" value="wave">
+                    <label for="weekly" data-abbr="W" data-long="Weekly"></label>
+                    <input type="radio" name="interval" id="monthly" value="mave">
+                    <label for="monthly" data-abbr="M" data-long="Monthly"></label>
+                    <input type="radio" name="interval" id="quarterly" value="quave">
+                    <label for="quarterly" data-abbr="Q" data-long="Quarterly"></label>
+                    <!-- -->
+                    <select id="ix">
+                        <option value="1">1M</option>
+                        <option value="3">3M</option>
+                        <option value="6">6M</option>
+                        <option value="12" selected>1Y</option>
+                        <option value="24">2Y</option>
+                        <option value="36">3Y</option>
+                        <option value="60">5Y</option>
+                        <option value="120">10Y</option>
+                        <option value="240">20Y</option>
+                        <option value="0">Max</option>
+                    </select>
+                    <!-- -->
+                    <span id="csdrange" data-long="Custom date range">
+                        <input type="date" min="1991-01-01"  id="start"
+                            pattern="\d{2}.\d{2}.\d{4}">
+                        <input type="date" min="1991-01-01"  id="end"
+                            pattern="\d{2}.\d{2}.\d{4}">
+                    </span>
+                </div>
+                <div id="overlays" data-long="Overlays">
+                    <details>
+                        <summary data-abbr="Overlays & Indicators ?"></summary>
+                        <p>Bollinger Band &reg; calculation by default is based on 20-day (week / month) simple moving average. 
+                    <br>
+                    Moving Average (Simple) (SMA): <code>S{number}</code>, e.g. S20 for 20-day (week / month) simple moving
+                    average.<br>
+                    Moving Average (Exponential) (EMA): <code>E{number}</code>, e.g. E20 for 20-day (week / month)
+                    exponential moving average.<br>
+                    Moving Average (Double Exponential) (DEMA): <code>D{number}</code>, e.g. D100 for 100-day (week /
+                    month) double exponential moving average.
+                    <br>
+                    <br>
+                    Moving Average Convergence/Divergence (MACD) calculation by default is based on 8-, 17- and 9-day
+                    (week / month) exponential moving average.
+                    <br>
+                    Rate of Change (ROC) calculation by default is based on 12-day (week / month) price change.
+                    <br>
+                    Relative Strength Index (RSI) calculation by default is based on 14-day average.
+                    <br>
+                    <br>
+                    Use the secondary click to draw a (trend) line. To delete, hold down the alt key (option on mac) and click on it.</p>
+                    </details>
+                    <input type="checkbox" id="bband">
+                    <label for="bband" data-abbr="BB" data-long="Bollinger Bands"></label>
+                    <span>
+                        <input type="text" id="bb_N" placeholder="20" title="N period of moving average">
+                        <input type="text" id="bb_K" placeholder="2"
+                            title="K * n-period standard deviation above/below moving average">
+                    </span>
+                    <input type="text" maxlength="4" id="ma_a" placeholder="MA" title="Moving average">
+                    <input type="text" maxlength="4" id="ma_b" placeholder="MA" title="Moving average">
+                    <input type="text" maxlength="4" id="ma_c" placeholder="MA" title="Moving average">
+                    <input type="text" maxlength="4" id="ma_d" placeholder="MA" title="Moving average">
+                </div>
+                <div id="indicators" data-long="Indicators">
+                    <input type="checkbox" id="macd">
+                    <label for="macd">MACD</label>
+                    <input type="checkbox" id="macdh">
+                    <label for="macdh" title="Histogram">Hist</label>
+                    <span>
+                        <input type="text" id="macd_fast" placeholder="8" title="Fast period">
+                        <input type="text" id="macd_slow" placeholder="17" title="Slow period">
+                        <input type="text" id="macd_signal" placeholder="9" title="Signal period">
+                    </span>
+                    <input type="checkbox" id="roc">
+                    <label for="roc">ROC</label>
+                    <input type="text" id="roc_values" placeholder="12" title="N period of price change">
+                    <input type="checkbox" id="rsi">
+                    <label for="rsi">RSI</label>
+                    <input type="text" id="rsi_values" placeholder="14" title="N period of moving average">
+                </div>
+            </div>
+        </menu>
+        <article>
+            <svg></svg>
+        </article>
+        </section>
+        <footer>
+            <p>
+                This site does not use cookies. <a href="./data/latest.json" title="Json data">Data</a>
+                <noscript>&bowtie; JavaScript is disabled!</noscript>
+            </p>
+            <p>
+                ルイス &copy; 2022 - 2025
+            </p>
+        </footer>
+    </main>
+    <script src="./js/data-store.js"></script>
+    <script src="./js/l.js" type="text/javascript"></script>
+</body>
+
+</html>
