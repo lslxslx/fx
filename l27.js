@@ -348,7 +348,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         legendoffseth = 1,
         margin = { top: 30, right: 60, bottom: 60 },
         width = svgvB.offsetWidth - margin.right,
-        height = svgvB.offsetHeight < minwidth ? minwidth - margin.top : svgvB.offsetHeight - margin.top,
+        // Do not measure content height: it includes panels from the last render.
+        height = Math.max(minwidth, window.innerHeight * 0.55) - margin.top,
         padding = 10,
         indicator = { top: height, height: 90 },
         ibottom = { bottom: indicator.top + indicator.height + padding };
