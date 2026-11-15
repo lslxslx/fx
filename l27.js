@@ -101,6 +101,9 @@ class HistoricalPriceChart {
     this.zoomTransform = d3.zoomIdentity;
     this.infoEvents = [];
     this.infoRequestId = 0;
+    this.trendLines = [];
+    this.nextTrendId = 0;
+    this.trendDraft = null;
     this.destroyed = false;
     this.bindControls();
     this.observeLayout();
@@ -164,8 +167,10 @@ class HistoricalPriceChart {
       this.zoomTransform = d3.zoomIdentity;
       this.state.currency = params.c;
       this.state.interval = params.i;
-      // Trendlines currently use pixels; do not carry them across datasets.
-      this.svg.select('.trendlines').remove();
+      // Completed lines are scoped to currency and interval. Cancel only the
+      // unfinished line when loading a different dataset.
+      this.trendDraft = null;
+      this.drawingTrend = false;
       this.refreshIndicators();
     } catch (error) {
       if (!this.destroyed && requestId === this.state.requestId) {
@@ -191,9 +196,8 @@ class HistoricalPriceChart {
     this.infoDialog?.close();
     this.lastLayout = { width: this.container.offsetWidth, height: window.innerHeight };
     this.container.querySelector('[data-chart-error]')?.remove();
-    const previousPlot = this.plotGeometry;
-    const trends = this.svg.select('.trendlines').node();
-    if (trends) trends.remove();
+    this.svg.on('.trends', null);
+    this.updateTrendLines = null;
     this.svg.selectAll('*').remove();
     if (!this.currentData.length) {
       this.zoomBehavior = null;
@@ -201,23 +205,6 @@ class HistoricalPriceChart {
       this.showError('Nuk ka të dhëna për intervalin e zgjedhur.'); return;
     }
     this.drawChart(this.currentData, this.state.currency);
-    if (trends) {
-      // Trend endpoints are stored in unzoomed plot coordinates.
-      if (previousPlot && this.plotGeometry) {
-        const nextPlot = this.plotGeometry;
-        const remap = (value, from, to) => to[0] + (value - from[0]) * (to[1] - to[0]) / (from[1] - from[0]);
-        d3.select(trends).selectAll('path').each(function (points) {
-          if (!Array.isArray(points)) return;
-          const resized = points.map(([px, py]) => [
-            remap(px, previousPlot.x, nextPlot.x), remap(py, previousPlot.y, nextPlot.y)
-          ]);
-          d3.select(this).datum(resized).attr('d', d3.line()(resized));
-        });
-      }
-      this.svg.select('.trendlines').remove();
-      this.svg.select('.trend-viewport').node().appendChild(trends);
-      trends.setAttribute('transform', `translate(${this.zoomTransform.x},0) scale(${this.zoomTransform.k},1)`);
-    }
   }
 
   observeLayout() {
@@ -248,6 +235,83 @@ class HistoricalPriceChart {
     const tx = range[0] * (1 - transform.k) +
       (transform.x - oldRange[0] * (1 - transform.k)) * ratio;
     return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
+  }
+
+  trendPoint(px, py, dates, x, y, bounds, clamp = false) {
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+    if (!clamp && (px < bounds.left || px > bounds.right || py < bounds.top || py > bounds.bottom)) return null;
+    px = Math.max(bounds.left, Math.min(bounds.right, px));
+    py = Math.max(bounds.top, Math.min(bounds.bottom, py));
+    const point = this.pointerSnapshot(px, dates, x.range(), [bounds.left, bounds.right], {});
+    const price = y.invert(py);
+    return point && Number.isFinite(price) ? { date: point.date, price } : null;
+  }
+
+  projectTrend(trend, x, y) {
+    // Missing dates stay missing: never attach an endpoint to a different date.
+    const points = [trend.start, trend.end].map(point => [x(point.date), y(point.price)]);
+    return points.every(point => point.every(Number.isFinite)) ? points : null;
+  }
+
+  visibleTrendLines(currency, interval, x, y) {
+    const lines = this.trendDraft ? [...this.trendLines, this.trendDraft] : this.trendLines;
+    return lines.filter(trend => trend.currency === currency && trend.interval === interval && this.projectTrend(trend, x, y));
+  }
+
+  cancelTrendDraft() {
+    this.trendDraft = null;
+    this.drawingTrend = false;
+    this.updateTrendLines?.();
+  }
+
+  bindTrendLines(svg, dates, x, y, bounds, currency, interval) {
+    const chart = this;
+    const line = d3.line();
+    const redraw = () => {
+      svg.select('.trendlines').selectAll('path')
+        .data(this.visibleTrendLines(currency, interval, x, y), trend => trend.id)
+        .join('path').attr('class', 'trend').attr('fill', 'none')
+        .attr('stroke', '#606060').attr('stroke-width', 2)
+        .attr('stroke-linecap', 'round').attr('vector-effect', 'non-scaling-stroke')
+        .attr('d', trend => line(this.projectTrend(trend, x, y)))
+        .on('pointerenter.trends', function (event) {
+          d3.select(this).attr('stroke', event.altKey ? '#f00' : '#f7dcad');
+        })
+        .on('pointerleave.trends', function () { d3.select(this).attr('stroke', '#606060'); })
+        .on('click.trends', (event, trend) => {
+          if (!event.altKey || chart.drawingTrend) return;
+          event.stopPropagation();
+          chart.trendLines = chart.trendLines.filter(item => item.id !== trend.id);
+          redraw();
+        });
+    };
+    this.updateTrendLines = redraw;
+    svg.on('contextmenu.trends', event => {
+      if (chart.state.loading || chart.zooming || event.target.closest?.('.info-marker')) return;
+      const [px, py] = d3.pointer(event, svg.node());
+      const point = chart.trendPoint(px, py, dates, x, y, bounds);
+      if (!point) return;
+      event.preventDefault();
+      chart.trendDraft = { id: ++chart.nextTrendId, currency, interval, start: point, end: { ...point } };
+      chart.drawingTrend = true;
+      redraw();
+    }).on('mousemove.trends', event => {
+      if (!chart.trendDraft || chart.state.loading) return;
+      const [px, py] = d3.pointer(event, svg.node());
+      const point = chart.trendPoint(px, py, dates, x, y, bounds, true);
+      if (point) { chart.trendDraft.end = point; redraw(); }
+    }).on('click.trends', event => {
+      if (!chart.trendDraft || chart.state.loading || event.altKey) return;
+      const [px, py] = d3.pointer(event, svg.node());
+      const point = chart.trendPoint(px, py, dates, x, y, bounds);
+      if (!point) return;
+      chart.trendDraft.end = point;
+      chart.trendLines.push(chart.trendDraft);
+      chart.trendDraft = null;
+      chart.drawingTrend = false;
+      redraw();
+    });
+    redraw();
   }
 
   normalizeInfoEvents(events) {
@@ -473,6 +537,9 @@ class HistoricalPriceChart {
       else this.reloadData();
     });
     this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
+    this.listen(window, 'keydown', event => {
+      if (event.key === 'Escape' && this.trendDraft) this.cancelTrendDraft();
+    });
   }
 
   closemenu() {
@@ -502,6 +569,10 @@ class HistoricalPriceChart {
     this.infoDialog?.remove();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
+    this.svg.on('.trends', null);
+    this.updateTrendLines = null;
+    this.trendDraft = null;
+    this.drawingTrend = false;
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
     this.setLoading(false);
   }
@@ -597,8 +668,8 @@ const ROC = this.ROC.bind(this);
 const RSI = this.RSI.bind(this);
 const bollingerband = this.bollingerband.bind(this);
 let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,bband,macd,macdh,roc,rsi}=this.config;
-const svgvB=this.container, interval=this.state.interval, chartRoot=this.svg, chart=this;
-this.drawingTrend = false;
+const svgvB=this.container, interval=this.state.interval, chart=this;
+this.drawingTrend = Boolean(this.trendDraft);
 const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     const limdata = 50,
         limidata = 20,
@@ -739,8 +810,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
     const svg = this.svg
         .attr('preserveAspectRatio', 'xMinYMin meet')
-        .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + ((macd || macdh) && (roc || rsi) ? height + margin.top + indicator.height * 2 + padding * 4 : (macd || macdh || roc || rsi ? height + margin.top + indicator.height + padding * 2 : height + margin.top)))
-        .call(trendlines);
+        .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + ((macd || macdh) && (roc || rsi) ? height + margin.top + indicator.height * 2 + padding * 4 : (macd || macdh || roc || rsi ? height + margin.top + indicator.height + padding * 2 : height + margin.top)));
 
     svg.append('defs').append('clipPath')
         .attr('id', this.priceClipId)
@@ -1190,6 +1260,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.append('g').attr('class', 'trend-viewport')
         .attr('clip-path', `url(#${this.priceClipId})`).append('g')
         .attr('class', 'trendlines');
+    this.bindTrendLines(svg, ddata, x, y,
+        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding }, currency, interval);
     const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
         { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding });
 
@@ -1221,7 +1293,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx);
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
-        svg.select('.trendlines').attr('transform', `translate(${transform.x},0) scale(${transform.k},1)`);
+        chart.updateTrendLines();
         updateInfoMarkers();
         hidePointer();
     };
@@ -1246,56 +1318,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         });
     svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
 
-    // trendlines function
-    function trendlines(selection) {
-        let strc = '#606060', strhc = '#f7dcad', strdc = '#f00', xy, xx, path, keep = false,
-            line = d3.line(d => d[0], d => d[1]);
-
-        selection.on('contextmenu',
-            function (event) {
-                event.preventDefault();
-                keep = true;
-                chart.drawingTrend = true;
-                xy = d3.pointer(event);
-                xy[0] = chart.zoomTransform.invertX(xy[0]);
-                path = chartRoot.select('.trendlines')
-                    .append('path')
-                    .datum([xy, xy])
-                    .attr('class', 'trend')
-                    .attr('stroke', strc)
-                    .attr('stroke-width', 2)
-                    .attr('vector-effect', 'non-scaling-stroke')
-                    .attr('stroke-linecap', 'round')
-                    .attr('d', line([xy, xy]));
-            })
-            .on('mousemove',
-                function (event) {
-                    if (keep) {
-                        xx = d3.pointer(event).map(x => x - 1);
-                        xx[0] = chart.zoomTransform.invertX(xx[0]);
-                        path.datum([xy, xx]).attr('d', line([xy, xx]));
-                    }
-                })
-            .on('click',
-                function () {
-                    keep = false;
-                    chart.drawingTrend = false;
-                    chartRoot.selectAll('.trend')
-                        .on('mouseover',
-                            function (event) {
-                                d3.select(event.currentTarget)
-                                    .attr('stroke', event.altKey ? strdc : strhc)
-                                    .on('click',
-                                        function (event) {
-                                            event.altKey ? event.currentTarget.remove() : null;
-                                        });
-                            })
-                        .on('mouseout',
-                            function (event) {
-                                d3.select(event.currentTarget).attr('stroke', strc);
-                            });
-                });
-    }
 }
 
 // round functions
