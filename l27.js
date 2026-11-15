@@ -1,4 +1,7 @@
 // GitHub Pages adaptation: JSON files in ./data/, no backend required.
+// Info events are loaded from ./data/events.json. Each item contains date
+// (YYYY-MM-DD), currency (EUR, USD, ... or '*'), title and description.
+// An empty JSON array [] means no markers. No embedded or sample events.
 /* Local replacement for q/cq. Does not intercept global fetch. */
 window.ForexData = (() => {
   const codes = ['EUR','USD','GBP','CHF','XAU','XAG','JPY','AUD','CAD'];
@@ -80,7 +83,7 @@ window.ForexData = (() => {
     } catch(e) {statusNode().textContent='Përmbledhja nuk u ngarkua: '+e.message;}
   }
   document.addEventListener('DOMContentLoaded',summary);
-  return {query,convert,load};
+  return {query,convert,load,period};
 })();
 
 
@@ -96,10 +99,14 @@ class HistoricalPriceChart {
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
     this.zoomTransform = d3.zoomIdentity;
+    this.infoEvents = [];
+    this.infoRequestId = 0;
     this.destroyed = false;
     this.bindControls();
     this.observeLayout();
     this.ready = this.reloadData();
+    // Optional metadata must never block the price chart.
+    this.eventsReady = this.reloadInfoEvents();
   }
 
   listen(element, event, handler) {
@@ -181,6 +188,7 @@ class HistoricalPriceChart {
     if (this.container.offsetWidth <= 0) { this.layoutPending = true; return; }
     this.layoutPending = false;
     this.pointerCleanup?.();
+    this.infoDialog?.close();
     this.lastLayout = { width: this.container.offsetWidth, height: window.innerHeight };
     this.container.querySelector('[data-chart-error]')?.remove();
     const previousPlot = this.plotGeometry;
@@ -242,6 +250,148 @@ class HistoricalPriceChart {
     return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
   }
 
+  normalizeInfoEvents(events) {
+    if (!Array.isArray(events)) throw new TypeError('Ngjarjet duhet të jenë një listë.');
+    return events.map((event, index) => {
+      const date = event?.date;
+      const timestamp = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+        ? Date.parse(date + 'T00:00:00Z') : NaN;
+      if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== date)
+        throw new TypeError(`Data e ngjarjes ${index + 1} duhet të jetë YYYY-MM-DD e vlefshme.`);
+      const currency = String(event.currency || '*').toUpperCase();
+      if (!['*','EUR','USD','GBP','CHF','XAU','XAG','JPY','AUD','CAD'].includes(currency))
+        throw new TypeError(`Monedhë e pavlefshme te ngjarja ${index + 1}.`);
+      if (typeof event.title !== 'string' || !event.title.trim())
+        throw new TypeError(`Mungon titulli i ngjarjes ${index + 1}.`);
+      if (event.description != null && typeof event.description !== 'string')
+        throw new TypeError(`Përshkrimi i ngjarjes ${index + 1} duhet të jetë tekst.`);
+      return { date, currency, title: event.title.trim(), description: event.description || '' };
+    });
+  }
+
+  setInfoEvents(events) {
+    const normalized = this.normalizeInfoEvents(events);
+    if (this.destroyed) return;
+    this.infoRequestId++;
+    this.infoAbort?.abort();
+    this.infoEvents = normalized;
+    this.state.infoEventsError = null;
+    this.render();
+  }
+
+  async reloadInfoEvents() {
+    if (this.destroyed) return false;
+    const requestId = ++this.infoRequestId;
+    this.infoAbort?.abort();
+    const controller = new AbortController();
+    this.infoAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    let succeeded = false;
+    try {
+      const response = await fetch('./data/events.json', { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) throw new Error(`events.json: HTTP ${response.status}`);
+      const events = this.normalizeInfoEvents(await response.json());
+      if (this.destroyed || requestId !== this.infoRequestId) return false;
+      this.infoEvents = events;
+      this.state.infoEventsError = null;
+      succeeded = true;
+    } catch (error) {
+      if (this.destroyed || requestId !== this.infoRequestId) return false;
+      this.infoEvents = [];
+      this.state.infoEventsError = error.name === 'AbortError'
+        ? 'Ngarkimi i events.json tejkaloi kohën e pritjes.' : error.message;
+      console.warn('Shënuesit I nuk u ngarkuan; grafiku vazhdon pa ngjarje.', this.state.infoEventsError);
+    } finally {
+      clearTimeout(timeout);
+      if (requestId === this.infoRequestId) this.infoAbort = null;
+    }
+    // Data loading will render the latest events itself when it finishes.
+    if (this.currentData.length && !this.state.loading) this.render();
+    return succeeded;
+  }
+
+  infoEventGroups(dates, currency, interval) {
+    const indices = new Map(Array.from(dates, (date, index) => [+date, index]));
+    const groups = new Map();
+    for (const event of this.infoEvents) {
+      if (event.currency !== '*' && event.currency !== currency) continue;
+      // Use the same period labels as the data adapter. Never silently move an
+      // event on a missing trading day to a different day in the daily chart.
+      const date = Date.parse(window.ForexData.period(event.date, interval) + 'T00:00:00Z');
+      const index = indices.get(date);
+      if (index === undefined) continue;
+      if (!groups.has(index)) groups.set(index, { index, date, events: [] });
+      groups.get(index).events.push(event);
+    }
+    return Array.from(groups.values());
+  }
+
+  showInfoEvents(group) {
+    if (this.destroyed) return;
+    if (!this.infoDialog) {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'chart-info-dialog';
+      dialog.setAttribute('aria-labelledby', this.priceClipId + '-info-title');
+      dialog.style.cssText = 'max-width: min(440px, 90vw);max-height:80vh;overflow:auto;padding:20px;box-sizing:border-box';
+      document.body.appendChild(dialog);
+      this.infoDialog = dialog;
+    }
+    const dialog = this.infoDialog;
+    dialog.replaceChildren();
+    const heading = document.createElement('h3');
+    heading.id = this.priceClipId + '-info-title';
+    heading.textContent = 'Informacion';
+    dialog.appendChild(heading);
+    for (const event of group.events) {
+      const section = document.createElement('section');
+      const title = document.createElement('strong');
+      title.textContent = event.date + ' · ' + event.title;
+      const description = document.createElement('p');
+      description.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere';
+      description.textContent = event.description;
+      section.append(title, description);
+      dialog.appendChild(section);
+    }
+    const close = document.createElement('button');
+    close.type = 'button'; close.textContent = 'Mbyll'; close.autofocus = true;
+    close.addEventListener('click', () => dialog.close());
+    dialog.appendChild(close);
+    if (!dialog.open) dialog.showModal();
+  }
+
+  drawInfoMarkers(svg, dates, prices, currency, interval, x, y, bounds) {
+    const groups = this.infoEventGroups(dates, currency, interval);
+    const layer = svg.append('g').attr('class', 'info-markers');
+    const markers = layer.selectAll('g').data(groups, group => group.date).join('g')
+      .attr('class', 'info-marker').attr('role', 'button').attr('tabindex', 0)
+      .attr('aria-haspopup', 'dialog').style('cursor', 'pointer')
+      .attr('aria-label', group => group.events.map(event => event.date + ': ' + event.title).join('; '));
+    markers.append('circle').attr('r', 16).attr('fill', 'transparent');
+    markers.append('circle').attr('r', 10).attr('fill', '#fff').attr('stroke', '#38678f');
+    markers.append('text').text('I').attr('text-anchor', 'middle').attr('dy', '0.35em')
+      .attr('fill', '#38678f').style('font-size', '12px').style('font-weight', 'bold');
+    markers.append('title').text(group => group.events.map(event => event.date + ': ' + event.title).join('\n'));
+    // Do not let marker activation start a trendline, pan or pointer capture.
+    markers.on('pointerdown.info mousedown.info touchstart.info dblclick.info contextmenu.info', event => {
+      event.stopPropagation();
+      if (event.type === 'contextmenu') event.preventDefault();
+    }).on('click.info', (event, group) => {
+      event.stopPropagation(); this.showInfoEvents(group);
+    }).on('keydown.info', (event, group) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault(); event.stopPropagation(); this.showInfoEvents(group);
+    });
+    return () => {
+      markers.attr('display', group => {
+        const px = x(group.date);
+        return Number.isFinite(prices[group.index]) && px >= bounds.left && px <= bounds.right ? null : 'none';
+      }).attr('transform', group => {
+        const py = Math.max(bounds.top + 16, Math.min(bounds.bottom - 16, y(prices[group.index]) - 20));
+        return `translate(${x(group.date)},${py})`;
+      });
+    };
+  }
+
   pointerSnapshot(pixel, dates, range, bounds, series) {
     if (!dates.length || !Number.isFinite(pixel)) return null;
     const last = dates.length - 1;
@@ -269,6 +419,7 @@ class HistoricalPriceChart {
       if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id);
     };
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
+      if (event.target?.closest?.('.info-marker')) { hide(); return; }
       if (event.type === 'pointerdown') {
         if (event.button !== 0) { hide(); return; }
         if (event.pointerType !== 'mouse') {
@@ -342,9 +493,13 @@ class HistoricalPriceChart {
 
   destroy() {
     this.destroyed=true; this.state.requestId++;
+    this.infoRequestId++;
+    this.infoAbort?.abort();
     clearTimeout(this.layoutTimer);
     this.resizeObserver?.disconnect();
     this.pointerCleanup?.();
+    this.infoDialog?.close();
+    this.infoDialog?.remove();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
     this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
@@ -1035,6 +1190,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.append('g').attr('class', 'trend-viewport')
         .attr('clip-path', `url(#${this.priceClipId})`).append('g')
         .attr('class', 'trendlines');
+    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
+        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding });
 
     // Update only geometry during gestures; indicator values remain calculated
     // from the complete history, so zoom does not restart their warm-up periods.
@@ -1065,13 +1222,14 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
         svg.select('.trendlines').attr('transform', `translate(${transform.x},0) scale(${transform.k},1)`);
+        updateInfoMarkers();
         hidePointer();
     };
     this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
         .constrain(constrain)
         .filter(event => !chart.drawingTrend && !event.altKey &&
             (!event.button || event.type === 'wheel') &&
-            !event.target.closest?.('.trend') &&
+            !event.target.closest?.('.trend, .info-marker') &&
             (event.type === 'touchstart' ? event.touches.length >= 2 : (() => {
                 const [px, py] = d3.pointer(event, svg.node());
                 return px >= plotLeft && px <= plotRight && py >= margin.top;
