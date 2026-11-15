@@ -104,6 +104,8 @@ class HistoricalPriceChart {
     this.trendLines = [];
     this.nextTrendId = 0;
     this.trendDraft = null;
+    this.selectedTrendId = null;
+    this.trendEdit = null;
     this.destroyed = false;
     this.bindControls();
     this.observeLayout();
@@ -157,6 +159,7 @@ class HistoricalPriceChart {
   }
 
   async reloadData() {
+    this.finishTrendEdit(false);
     const requestId = ++this.state.requestId;
     const params = this.parameters();
     this.setLoading(true);
@@ -190,6 +193,7 @@ class HistoricalPriceChart {
 
   render() {
     if (this.destroyed) return;
+    this.finishTrendEdit(false, false);
     if (this.container.offsetWidth <= 0) { this.layoutPending = true; return; }
     this.layoutPending = false;
     this.pointerCleanup?.();
@@ -264,35 +268,127 @@ class HistoricalPriceChart {
     this.updateTrendLines?.();
   }
 
+  finishTrendEdit(commit = true, redraw = true) {
+    const edit = this.trendEdit;
+    if (!edit) return;
+    this.trendEdit = null;
+    if (!commit) {
+      const trend = this.trendLines.find(item => item.id === edit.trendId);
+      if (trend) trend[edit.key] = { ...edit.original };
+    }
+    if (edit.node.hasPointerCapture?.(edit.pointerId)) edit.node.releasePointerCapture(edit.pointerId);
+    if (redraw) this.updateTrendLines?.();
+  }
+
+  bindTrendHandles(handles, svg, dates, x, y, bounds) {
+    const chart = this;
+    const move = event => {
+      const edit = chart.trendEdit;
+      if (!edit || edit.pointerId !== event.pointerId) return;
+      event.preventDefault(); event.stopPropagation();
+      const trend = chart.trendLines.find(item => item.id === edit.trendId);
+      const [px, py] = d3.pointer(event, svg.node());
+      const point = chart.trendPoint(px, py, dates, x, y, bounds, true);
+      if (trend && point) { trend[edit.key] = point; chart.updateTrendLines(); }
+    };
+    handles.on('pointerdown.edit', function (event, handle) {
+      event.stopPropagation();
+      if (event.button !== 0 || chart.state.loading || chart.drawingTrend || chart.zooming || chart.trendEdit) return;
+      event.preventDefault();
+      chart.trendEdit = { trendId: handle.trend.id, key: handle.key,
+        original: { ...handle.trend[handle.key] }, pointerId: event.pointerId, node: this };
+      this.setPointerCapture(event.pointerId);
+      this.focus?.({ preventScroll: true });
+    }).on('pointermove.edit', move)
+      .on('pointerup.edit', event => {
+        if (chart.trendEdit?.pointerId !== event.pointerId) return;
+        move(event); chart.finishTrendEdit(true);
+      })
+      .on('pointercancel.edit lostpointercapture.edit', event => {
+        if (chart.trendEdit?.pointerId !== event.pointerId) return;
+        event.stopPropagation(); chart.finishTrendEdit(false);
+      })
+      .on('mousedown.edit touchstart.edit click.edit dblclick.edit contextmenu.edit', event => {
+        event.stopPropagation();
+        if (event.type === 'contextmenu') event.preventDefault();
+      })
+      .on('keydown.edit', (event, handle) => {
+        if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) || chart.trendEdit || chart.state.loading) return;
+        event.preventDefault(); event.stopPropagation();
+        const point = handle.trend[handle.key];
+        let px = x(point.date), py = y(point.price);
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          const index = Array.from(dates).indexOf(point.date);
+          const direction = (event.key === 'ArrowRight' ? 1 : -1) * Math.sign(x.range()[1] - x.range()[0]);
+          const next = Math.max(0, Math.min(dates.length - 1, index + direction));
+          px = x(dates[next]);
+        } else py += (event.key === 'ArrowDown' ? 1 : -1) * (event.shiftKey ? 10 : 1);
+        const nextPoint = chart.trendPoint(px, py, dates, x, y, bounds, true);
+        if (nextPoint) { handle.trend[handle.key] = nextPoint; chart.updateTrendLines(); }
+      });
+  }
+
   bindTrendLines(svg, dates, x, y, bounds, currency, interval) {
     const chart = this;
     const line = d3.line();
     const redraw = () => {
-      svg.select('.trendlines').selectAll('path')
-        .data(this.visibleTrendLines(currency, interval, x, y), trend => trend.id)
+      const lines = this.visibleTrendLines(currency, interval, x, y);
+      // A wider transparent stroke makes selection practical on touch screens.
+      svg.select('.trendlines').selectAll('path.trend-hit')
+        .data(lines, trend => trend.id).join('path').attr('class', 'trend-hit')
+        .attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', 16)
+        .attr('pointer-events', 'stroke').attr('d', trend => line(this.projectTrend(trend, x, y)));
+      svg.select('.trendlines').selectAll('path.trend')
+        .data(lines, trend => trend.id)
         .join('path').attr('class', 'trend').attr('fill', 'none')
-        .attr('stroke', '#606060').attr('stroke-width', 2)
+        .attr('tabindex', 0).attr('role', 'button')
+        .attr('aria-label', 'Përzgjidh vijën e trendit për të lëvizur skajet')
+        .attr('stroke', trend => trend.id === chart.selectedTrendId ? '#38678f' : '#606060').attr('stroke-width', 2)
         .attr('stroke-linecap', 'round').attr('vector-effect', 'non-scaling-stroke')
-        .attr('d', trend => line(this.projectTrend(trend, x, y)))
-        .on('pointerenter.trends', function (event) {
-          d3.select(this).attr('stroke', event.altKey ? '#f00' : '#f7dcad');
+        .attr('d', trend => line(this.projectTrend(trend, x, y)));
+      svg.select('.trendlines').selectAll('path').style('cursor', 'pointer')
+        .on('pointerdown.trends mousedown.trends touchstart.trends', event => {
+          if (!chart.drawingTrend) event.stopPropagation();
         })
-        .on('pointerleave.trends', function () { d3.select(this).attr('stroke', '#606060'); })
         .on('click.trends', (event, trend) => {
-          if (!event.altKey || chart.drawingTrend) return;
+          if (chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
           event.stopPropagation();
-          chart.trendLines = chart.trendLines.filter(item => item.id !== trend.id);
+          if (event.altKey) {
+            chart.trendLines = chart.trendLines.filter(item => item.id !== trend.id);
+            if (chart.selectedTrendId === trend.id) chart.selectedTrendId = null;
+          } else chart.selectedTrendId = trend.id;
           redraw();
+        }).on('keydown.trends', (event, trend) => {
+          if (!['Enter', ' '].includes(event.key) || chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
+          event.preventDefault(); event.stopPropagation();
+          chart.selectedTrendId = trend.id; redraw();
         });
+      const selected = chart.drawingTrend ? null : lines.find(trend => trend.id === chart.selectedTrendId);
+      const data = selected ? ['start','end'].map(key => ({ trend: selected, key })) : [];
+      const handles = svg.select('.trend-handles').selectAll('g.trend-handle')
+        .data(data, handle => `${handle.trend.id}-${handle.key}`).join(enter => {
+          const group = enter.append('g').attr('class', 'trend-handle');
+          group.append('circle').attr('r', 16).attr('fill', 'transparent');
+          group.append('circle').attr('r', 6).attr('fill', '#fff').attr('stroke', '#38678f').attr('stroke-width', 2);
+          return group;
+        }).attr('tabindex', 0).attr('role', 'button').style('cursor', 'move').style('touch-action', 'none')
+        .attr('aria-label', handle => `${handle.key === 'start' ? 'Fillimi' : 'Fundi'} i vijës: ${new Date(handle.trend[handle.key].date).toISOString().slice(0, 10)}, ${handle.trend[handle.key].price.toFixed(2)}. Lëvize me shigjetat.`)
+        .attr('transform', handle => `translate(${x(handle.trend[handle.key].date)},${y(handle.trend[handle.key].price)})`)
+        .attr('display', handle => {
+          const point = handle.trend[handle.key], px = x(point.date), py = y(point.price);
+          return px >= bounds.left && px <= bounds.right && py >= bounds.top && py <= bounds.bottom ? null : 'none';
+        });
+      chart.bindTrendHandles(handles, svg, dates, x, y, bounds);
     };
     this.updateTrendLines = redraw;
     svg.on('contextmenu.trends', event => {
-      if (chart.state.loading || chart.zooming || event.target.closest?.('.info-marker')) return;
+      if (chart.state.loading || chart.zooming || chart.trendEdit || event.target.closest?.('.info-marker, .trend-handle')) return;
       const [px, py] = d3.pointer(event, svg.node());
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
       if (!point) return;
       event.preventDefault();
       chart.trendDraft = { id: ++chart.nextTrendId, currency, interval, start: point, end: { ...point } };
+      chart.selectedTrendId = null;
       chart.drawingTrend = true;
       redraw();
     }).on('mousemove.trends', event => {
@@ -301,12 +397,14 @@ class HistoricalPriceChart {
       const point = chart.trendPoint(px, py, dates, x, y, bounds, true);
       if (point) { chart.trendDraft.end = point; redraw(); }
     }).on('click.trends', event => {
-      if (!chart.trendDraft || chart.state.loading || event.altKey) return;
+      if (chart.state.loading || chart.trendEdit || event.altKey) return;
+      if (!chart.trendDraft) { chart.selectedTrendId = null; redraw(); return; }
       const [px, py] = d3.pointer(event, svg.node());
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
       if (!point) return;
       chart.trendDraft.end = point;
       chart.trendLines.push(chart.trendDraft);
+      chart.selectedTrendId = chart.trendDraft.id;
       chart.trendDraft = null;
       chart.drawingTrend = false;
       redraw();
@@ -483,7 +581,7 @@ class HistoricalPriceChart {
       if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id);
     };
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
-      if (event.target?.closest?.('.info-marker')) { hide(); return; }
+      if (event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle')) { hide(); return; }
       if (event.type === 'pointerdown') {
         if (event.button !== 0) { hide(); return; }
         if (event.pointerType !== 'mouse') {
@@ -493,7 +591,7 @@ class HistoricalPriceChart {
           event.preventDefault();
         }
       }
-      if (this.zooming || this.drawingTrend || active.size > 1 ||
+      if (this.zooming || this.drawingTrend || this.trendEdit || active.size > 1 ||
           (event.pointerType === 'mouse' && event.buttons)) { hide(); return; }
       paint(event);
     });
@@ -538,7 +636,10 @@ class HistoricalPriceChart {
     });
     this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
     this.listen(window, 'keydown', event => {
-      if (event.key === 'Escape' && this.trendDraft) this.cancelTrendDraft();
+      if (event.key !== 'Escape') return;
+      if (this.trendEdit) this.finishTrendEdit(false);
+      else if (this.trendDraft) this.cancelTrendDraft();
+      else { this.selectedTrendId = null; this.updateTrendLines?.(); }
     });
   }
 
@@ -559,6 +660,7 @@ class HistoricalPriceChart {
   }
 
   destroy() {
+    this.finishTrendEdit(false, false);
     this.destroyed=true; this.state.requestId++;
     this.infoRequestId++;
     this.infoAbort?.abort();
@@ -1260,6 +1362,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.append('g').attr('class', 'trend-viewport')
         .attr('clip-path', `url(#${this.priceClipId})`).append('g')
         .attr('class', 'trendlines');
+    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
     this.bindTrendLines(svg, ddata, x, y,
         { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding }, currency, interval);
     const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
@@ -1299,9 +1402,9 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     };
     this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
         .constrain(constrain)
-        .filter(event => !chart.drawingTrend && !event.altKey &&
+        .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
             (!event.button || event.type === 'wheel') &&
-            !event.target.closest?.('.trend, .info-marker') &&
+            !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
             (event.type === 'touchstart' ? event.touches.length >= 2 : (() => {
                 const [px, py] = d3.pointer(event, svg.node());
                 return px >= plotLeft && px <= plotRight && py >= margin.top;
@@ -1312,7 +1415,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.style('touch-action', 'none').call(this.zoomBehavior)
         .on('dblclick.zoom', null)
         .on('dblclick.reset', event => {
-            if (chart.drawingTrend) return;
+            if (chart.drawingTrend || chart.trendEdit) return;
             event.preventDefault();
             svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
         });
