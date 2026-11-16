@@ -101,6 +101,7 @@ class HistoricalPriceChart {
     this.currentData = [];
     this.calculationCache = null;
     this.config = {};
+    this.oscillatorOrder = []; // RSI / ROC activation order; MACD keeps its fixed position.
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
     this.zoomTransform = d3.zoomIdentity;
@@ -147,6 +148,13 @@ class HistoricalPriceChart {
       macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi')
     });
     this.config = config;
+    // Track selections, not data availability: a short history must not erase
+    // the user's order. Turning an indicator off removes it; turning it back
+    // on appends it after any oscillator that is still selected.
+    this.oscillatorOrder = (this.oscillatorOrder || []).filter(key => config[key]);
+    for (const key of ['roc', 'rsi']) {
+      if (config[key] && !this.oscillatorOrder.includes(key)) this.oscillatorOrder.push(key);
+    }
   }
 
   parameters() {
@@ -865,10 +873,12 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         MacdLine, MacdSignal, MacdHist, Roc, Rsi } = series;
     ({ bband, macd, macdh, roc, rsi } = series.enabled);
     const xrx = (_d, i) => x(ddata[i]);
-    // Keep the original panel dimensions and appearance. Only separate ROC / RSI.
+    // MACD stays first. Only ROC / RSI follow their selection order.
     const panels = [];
     let panelTop = indicator.top;
-    for (const [key, enabled] of [['macd', macd || macdh], ['roc', roc], ['rsi', rsi]]) {
+    const oscillatorPanels = (this.oscillatorOrder || ['roc', 'rsi'])
+        .map(key => [key, key === 'roc' ? roc : rsi]);
+    for (const [key, enabled] of [['macd', macd || macdh], ...oscillatorPanels]) {
         if (!enabled) continue;
         panels.push({ key, top: panelTop, bottom: panelTop + indicator.height + padding });
         panelTop += indicator.height + padding * 2;
