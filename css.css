@@ -493,6 +493,35 @@ svg text {
 }
 
 
+/* Chart geometry is controlled by the SVG viewBox, never by its last height. */
+article > svg.chart-svg {
+	display: block;
+	width: 100%;
+	height: auto;
+	overflow: hidden;
+}
+
+/* Keep the price scale usable on narrow screens too. */
+.chart-svg .domain,
+.chart-svg .tick {
+	display: initial;
+}
+
+.price-axis-hit {
+	cursor: ns-resize;
+	touch-action: none;
+}
+
+.price-axis-hit:focus-visible {
+	outline: none;
+	stroke: var(--axis-domainc);
+	stroke-width: 1;
+}
+
+.chart-svg text {
+	font-variant-numeric: tabular-nums;
+}
+
 /* bollinger band area */
 
 .abbc {
