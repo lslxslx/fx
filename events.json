@@ -1,8 +1,8 @@
 [
   {
-    date: "2026-11-12",
-    currency: "EUR",
-    title: "Titulli i ngjarjes",
-    description: "Përshkrimi dhe burimi i informacionit."
+    "date": "2026-11-12",
+    "currency": "EUR",
+    "title": "Titulli i ngjarjes",
+    "description": "Përshkrimi dhe burimi i informacionit."
   }
 ]

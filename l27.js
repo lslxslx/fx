@@ -109,11 +109,13 @@ class HistoricalPriceChart {
     this.infoEvents = [];
     this.infoRequestId = 0;
     this.trendLines = [];
+    this.levels = []; // Horizontal support / resistance levels, scoped to currency.
     this.nextTrendId = 0;
     this.trendDraft = null;
     this.selectedTrendId = null;
     this.trendEdit = null;
     this.destroyed = false;
+    this.restoreState();
     this.bindControls();
     this.observeLayout();
     this.ready = this.reloadData();
@@ -125,6 +127,58 @@ class HistoricalPriceChart {
     if (!element) return;
     element.addEventListener(event, handler);
     this.listeners.push(() => element.removeEventListener(event, handler));
+  }
+
+  // Settings, trend lines and levels survive a reload. Custom dates are not
+  // stored: a remembered end date would silently hide newer data.
+  restoreState() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(HistoricalPriceChart.storageKey) || 'null'); } catch (error) { return; }
+    if (!saved || typeof saved !== 'object') return;
+    const node = id => document.getElementById(id);
+    for (const id of HistoricalPriceChart.textControls) {
+      if (node(id) && typeof saved.text?.[id] === 'string') node(id).value = saved.text[id];
+    }
+    for (const id of HistoricalPriceChart.checkControls) {
+      if (node(id) && typeof saved.checked?.[id] === 'boolean') node(id).checked = saved.checked[id];
+    }
+    const currency = document.querySelector('input[name=currency][value="' + String(saved.currency).replace(/[^A-Z]/g, '') + '"]');
+    if (currency) currency.checked = true;
+    const interval = Array.from(document.querySelectorAll('input[name=interval]')).find(input => input.value === saved.interval);
+    if (interval) interval.checked = true;
+    const select = node('ix');
+    if (select && Array.from(select.options).some(option => option.value === saved.ix)) select.value = saved.ix;
+    if (Array.isArray(saved.order)) this.oscillatorOrder = saved.order.filter(key => ['roc', 'rsi', 'stoch'].includes(key));
+    const point = value => value && Number.isFinite(value.date) && Number.isFinite(value.price);
+    if (Array.isArray(saved.trendLines)) {
+      this.trendLines = saved.trendLines
+        .filter(trend => trend && typeof trend.currency === 'string' && typeof trend.interval === 'string' && point(trend.start) && point(trend.end))
+        .map(trend => ({ id: ++this.nextTrendId, currency: trend.currency, interval: trend.interval,
+          start: { date: trend.start.date, price: trend.start.price }, end: { date: trend.end.date, price: trend.end.price } }));
+    }
+    if (Array.isArray(saved.levels)) {
+      this.levels = saved.levels.filter(level => level && typeof level.currency === 'string' && Number.isFinite(level.price))
+        .map(level => ({ id: ++this.nextTrendId, currency: level.currency, price: level.price }));
+    }
+  }
+
+  saveState() {
+    if (this.destroyed) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      const node = id => document.getElementById(id);
+      const state = {
+        currency: document.querySelector('input[name=currency]:checked')?.value,
+        interval: document.querySelector('input[name=interval]:checked')?.value,
+        ix: node('ix')?.value, order: this.oscillatorOrder,
+        text: Object.fromEntries(HistoricalPriceChart.textControls.filter(node).map(id => [id, node(id).value])),
+        checked: Object.fromEntries(HistoricalPriceChart.checkControls.filter(node).map(id => [id, node(id).checked])),
+        trendLines: this.trendLines.map(({ currency, interval, start, end }) => ({ currency, interval, start, end })),
+        levels: this.levels.map(({ currency, price }) => ({ currency, price }))
+      };
+      // Storage can be disabled or full; the chart must keep working without it.
+      try { localStorage.setItem(HistoricalPriceChart.storageKey, JSON.stringify(state)); } catch (error) { /* ignore */ }
+    }, 250);
   }
 
   readIndicators() {
@@ -144,15 +198,17 @@ class HistoricalPriceChart {
       N: Math.trunc(number('bb_N',20,2)), K: number('bb_K',2),
       eshort: Math.trunc(number('macd_fast',8)), elong: Math.trunc(number('macd_slow',17)),
       esignal: Math.trunc(number('macd_signal',9)), RC: Math.trunc(number('roc_values',12)),
-      RS: Math.trunc(number('rsi_values',14)), bband:checked('bband'), macd:checked('macd'),
-      macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi')
+      RS: Math.trunc(number('rsi_values',14)), ST: Math.trunc(number('stoch_values',14,2)),
+      bband:checked('bband'), macd:checked('macd'),
+      macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi'),
+      stoch:checked('stoch'), signals:checked('signals')
     });
     this.config = config;
     // Track selections, not data availability: a short history must not erase
     // the user's order. Turning an indicator off removes it; turning it back
     // on appends it after any oscillator that is still selected.
     this.oscillatorOrder = (this.oscillatorOrder || []).filter(key => config[key]);
-    for (const key of ['roc', 'rsi']) {
+    for (const key of ['roc', 'rsi', 'stoch']) {
       if (config[key] && !this.oscillatorOrder.includes(key)) this.oscillatorOrder.push(key);
     }
   }
@@ -176,6 +232,7 @@ class HistoricalPriceChart {
     this.finishTrendEdit(false);
     const requestId = ++this.state.requestId;
     const params = this.parameters();
+    this.saveState();
     this.setLoading(true);
     try {
       const rows = await window.ForexData.query('q?'+new URLSearchParams(params));
@@ -204,6 +261,7 @@ class HistoricalPriceChart {
   refreshIndicators() {
     if (this.destroyed) return;
     this.readIndicators();
+    this.saveState();
     this.render();
   }
 
@@ -241,30 +299,54 @@ class HistoricalPriceChart {
     const enabled = {
       bband: data.length >= 50 && c.bband, macd: data.length >= 50 && c.macd,
       macdh: data.length >= 50 && c.macdh, roc: data.length >= 20 && c.roc,
-      rsi: data.length >= 20 && c.rsi
+      rsi: data.length >= 20 && c.rsi, stoch: data.length >= 20 && c.stoch
     };
+    // Rows arrive newest first, but every indicator formula is defined on
+    // chronological data. Calculate oldest -> newest, then flip the result so
+    // index 0 is again the latest value and index i lines up with ddata[i].
+    const chrono = cache.chrono || (cache.chrono = Array.from(data).reverse());
+    const newestFirst = result => Array.from(result).reverse();
     const memo = (parameters, calculate) => this.cachedIndicator(cache, parameters, calculate);
     const ma = suffix => !isNaN(c['ma_' + suffix])
-      ? memo(['ma', c['mma_' + suffix], c['ma_' + suffix]], () => this.SwMA(c['mma_' + suffix], data, c['ma_' + suffix])) : false;
+      ? memo(['ma', c['mma_' + suffix], c['ma_' + suffix]], () => newestFirst(this.SwMA(c['mma_' + suffix], chrono, c['ma_' + suffix]))) : false;
     const bands = enabled.bband ? memo(['bb', c.N, c.K], () => {
-      const result = this.bollingerband(data, c.N, c.K);
+      const result = newestFirst(this.bollingerband(chrono, c.N, c.K));
       return { data: result, lower: result.map(d => d.low), upper: result.map(d => d.high) };
     }) : null;
     // MACD line, signal and histogram share one calculation and parameter key.
     const macd = enabled.macd || enabled.macdh ? memo(['macd', c.eshort, c.elong, c.esignal], () => {
-      const result = this.MACD(data);
-      return { data: result, line: result.map(d => d.macdline), signal: result.map(d => d.macdsignal), histogram: result.map(d => d.macdhist) };
+      const result = this.MACD(chrono)[0];
+      return { line: [newestFirst(result.macdline)], signal: [newestFirst(result.macdsignal)], histogram: [newestFirst(result.macdhist)] };
+    }) : null;
+    const stoch = enabled.stoch ? memo(['stoch', c.ST], () => {
+      const result = this.STOCH(chrono, c.ST);
+      return { k: newestFirst(result.k), d: newestFirst(result.d) };
     }) : null;
     return {
       vdata: data, ddata: cache.ddata, min: cache.min, max: cache.max, enabled,
       BandData: bands ? bands.data : false, LowerBand: bands ? bands.lower : false, UpperBand: bands ? bands.upper : false,
       MA_a: ma('a'), MA_b: ma('b'), MA_c: ma('c'), MA_d: ma('d'),
-      Macd: macd ? macd.data : false,
       MacdLine: enabled.macd ? macd.line : false, MacdSignal: enabled.macd ? macd.signal : false,
       MacdHist: enabled.macdh ? macd.histogram : false,
-      Roc: enabled.roc ? memo(['roc', c.RC], () => this.ROC(data, c.RC).map(d => d.roc)) : false,
-      Rsi: enabled.rsi ? memo(['rsi', c.RS], () => this.RSI(data, c.RS).map(d => d.rsi)) : false
+      // Crossover markers need both MACD series even when only the histogram is drawn.
+      MacdCross: macd ? { line: macd.line[0], signal: macd.signal[0] } : null,
+      Roc: enabled.roc ? memo(['roc', c.RC], () => newestFirst(this.ROC(chrono, c.RC).map(d => d.roc))) : false,
+      Rsi: enabled.rsi ? memo(['rsi', c.RS], () => newestFirst(this.RSI(chrono, c.RS).map(d => d.rsi))) : false,
+      StochK: stoch ? stoch.k : false, StochD: stoch ? stoch.d : false
     };
+  }
+
+  // Indices (newest first) where series a crosses series b. up = a moves above b.
+  crossings(a, b) {
+    const result = [];
+    if (!a || !b) return result;
+    for (let i = 0, n = Math.min(a.length, b.length) - 1; i < n; i++) {
+      const now = a[i] - b[i], before = a[i + 1] - b[i + 1];
+      if (!Number.isFinite(now) || !Number.isFinite(before)) continue;
+      if (now > 0 && before <= 0) result.push({ index: i, up: true });
+      else if (now < 0 && before >= 0) result.push({ index: i, up: false });
+    }
+    return result;
   }
 
   render() {
@@ -455,6 +537,27 @@ class HistoricalPriceChart {
           return px >= bounds.left && px <= bounds.right && py >= bounds.top && py <= bounds.bottom ? null : 'none';
         });
       chart.bindTrendHandles(handles, svg, dates, x, y, bounds);
+      // Horizontal levels: Shift+click adds one, Alt+click removes it.
+      const levels = svg.select('.levels').selectAll('g.level')
+        .data(chart.levels.filter(level => level.currency === currency), level => level.id).join(enter => {
+          const group = enter.append('g').attr('class', 'level');
+          group.append('line').attr('class', 'level-line');
+          group.append('line').attr('class', 'level-hit').attr('stroke', 'transparent')
+            .attr('stroke-width', 14).attr('pointer-events', 'stroke').style('cursor', 'pointer');
+          group.append('text').attr('class', 'level-label').attr('text-anchor', 'end').attr('dy', -4);
+          return group;
+        }).attr('transform', level => `translate(0,${y(level.price)})`)
+        .attr('display', level => y(level.price) >= bounds.top && y(level.price) <= bounds.bottom ? null : 'none');
+      levels.selectAll('line').attr('x1', bounds.left).attr('x2', bounds.right);
+      levels.select('.level-label').attr('x', bounds.right - 4).text(level => formatFxNumber(level.price));
+      levels.select('.level-hit').on('click.levels', (event, level) => {
+        if (!event.altKey || chart.state.loading) return;
+        event.stopPropagation();
+        chart.levels = chart.levels.filter(item => item.id !== level.id);
+        redraw();
+      }).select('title').remove();
+      levels.select('.level-hit').append('title').text('Alt+click to remove');
+      chart.saveState();
     };
     this.updateTrendLines = redraw;
     svg.on('contextmenu.trends', event => {
@@ -474,7 +577,14 @@ class HistoricalPriceChart {
       if (point) { chart.trendDraft.end = point; redraw(); }
     }).on('click.trends', event => {
       if (chart.state.loading || chart.trendEdit || event.altKey) return;
-      if (!chart.trendDraft) { chart.selectedTrendId = null; redraw(); return; }
+      if (!chart.trendDraft) {
+        if (event.shiftKey) {
+          const [lx, ly] = d3.pointer(event, svg.node());
+          const level = chart.trendPoint(lx, ly, dates, x, y, bounds);
+          if (level) chart.levels.push({ id: ++chart.nextTrendId, currency, price: Math.round(level.price * 100) / 100 });
+        }
+        chart.selectedTrendId = null; redraw(); return;
+      }
       const [px, py] = d3.pointer(event, svg.node());
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
       if (!point) return;
@@ -742,6 +852,7 @@ class HistoricalPriceChart {
     this.infoRequestId++;
     this.infoAbort?.abort();
     clearTimeout(this.layoutTimer);
+    clearTimeout(this.saveTimer);
     this.resizeObserver?.disconnect();
     this.pointerCleanup?.();
     this.infoDialog?.close();
@@ -846,7 +957,7 @@ const MACD = this.MACD.bind(this);
 const ROC = this.ROC.bind(this);
 const RSI = this.RSI.bind(this);
 const bollingerband = this.bollingerband.bind(this);
-let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,bband,macd,macdh,roc,rsi}=this.config;
+let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,ST,bband,macd,macdh,roc,rsi,stoch,signals}=this.config;
 const svgvB=this.container, interval=this.state.interval, chart=this;
 this.drawingTrend = Boolean(this.trendDraft);
 const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
@@ -870,14 +981,14 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         ibottom = { bottom: indicator.top + indicator.height + padding };
 
     const { vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
-        MacdLine, MacdSignal, MacdHist, Roc, Rsi } = series;
-    ({ bband, macd, macdh, roc, rsi } = series.enabled);
+        MacdLine, MacdSignal, MacdHist, MacdCross, Roc, Rsi, StochK, StochD } = series;
+    ({ bband, macd, macdh, roc, rsi, stoch } = series.enabled);
     const xrx = (_d, i) => x(ddata[i]);
     // MACD stays first. Only ROC / RSI follow their selection order.
     const panels = [];
     let panelTop = indicator.top;
     const oscillatorPanels = (this.oscillatorOrder || ['roc', 'rsi'])
-        .map(key => [key, key === 'roc' ? roc : rsi]);
+        .map(key => [key, { roc, rsi, stoch }[key]]);
     for (const [key, enabled] of [['macd', macd || macdh], ...oscillatorPanels]) {
         if (!enabled) continue;
         panels.push({ key, top: panelTop, bottom: panelTop + indicator.height + padding });
@@ -985,8 +1096,17 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .domain([0, 100])
         .range([panelByKey.rsi?.bottom ?? ibottom.bottom, panelByKey.rsi?.top ?? indicator.top])
         .nice();
+    // Stochastic
+    let yStoch = d3.scaleLinear()
+        .domain([0, 100])
+        .range([panelByKey.stoch?.bottom ?? ibottom.bottom, panelByKey.stoch?.top ?? indicator.top]);
+
+    let ySTAxis = g => g
+        .attr('transform', 'translate(' + width + ', 0)')
+        .call(d3.axisRight(yStoch).tickValues([20, 50, 80]).tickSizeOuter(0));
+
     this.plotScales = { x, y, ...(macd || macdh ? { macd: yMacd } : {}),
-        ...(roc ? { roc: yRoc } : {}), ...(rsi ? { rsi: yRsi } : {}) };
+        ...(roc ? { roc: yRoc } : {}), ...(rsi ? { rsi: yRsi } : {}), ...(stoch ? { stoch: yStoch } : {}) };
 
     let line = d3.line()
         .defined(Number.isFinite)
@@ -1029,7 +1149,39 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         macdhcp = MacdHist != 0 ? '#708070' : '',
         macdhistlegc = MacdHist != 0 ? '#808080' : '',
         rocc = Roc != 0 ? '#f28f3b' : '',
-        rsic = Rsi != 0 ? '#505050' : '';
+        rsic = Rsi != 0 ? '#505050' : '',
+        stochkc = '#7a5fc0',
+        stochdc = '#c9a227',
+        signalup = '#00b061',
+        signaldown = '#e04b4b';
+
+    // Grid lines follow the axis ticks, so they are redrawn on zoom and pan.
+    const gridLayer = svg.append('g').attr('class', 'price-grid').attr('pointer-events', 'none');
+    const drawGrid = () => {
+        gridLayer.selectAll('line.grid-h')
+            .data(y.ticks().filter(tick => y(tick) >= margin.top && y(tick) <= height - padding))
+            .join('line').attr('class', 'grid-h')
+            .attr('x1', plotLeft).attr('x2', plotRight)
+            .attr('y1', tick => Math.round(y(tick)) + 0.5).attr('y2', tick => Math.round(y(tick)) + 0.5);
+        gridLayer.selectAll('line.grid-v').data(visibleTicks())
+            .join('line').attr('class', 'grid-v')
+            .attr('x1', date => Math.round(x(date)) + 0.5).attr('x2', date => Math.round(x(date)) + 0.5)
+            .attr('y1', margin.top).attr('y2', lowerBottom);
+    };
+
+    // Latest price: dashed guide plus a tag on the price axis.
+    const lastPrice = svg.append('g').attr('class', 'last-price').attr('pointer-events', 'none');
+    lastPrice.append('line').attr('x1', plotLeft).attr('x2', plotRight)
+        .attr('stroke', price).attr('stroke-width', 0.75).attr('stroke-dasharray', '2 3');
+    const lastTag = lastPrice.append('g').attr('transform', 'translate(' + width + ',0)');
+    lastTag.append('rect').attr('x', 1).attr('y', -9).attr('height', 18).attr('rx', 2)
+        .attr('width', Math.max(0, margin.right - 2)).attr('fill', price);
+    lastTag.append('text').attr('x', 9).attr('dy', '0.32em').attr('fill', '#fff').text(formatFxNumber(vdata[0]));
+    const updateLastPrice = () => {
+        const py = y(vdata[0]);
+        lastPrice.attr('display', py >= margin.top && py <= height - padding ? null : 'none')
+            .attr('transform', 'translate(0,' + py + ')');
+    };
 
     // bollinger band area
     if (bband) {
@@ -1248,15 +1400,47 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         hr(70, yRsi, '#808080', 0.3);
     }
 
-    for (const [key, enabled, data, color] of [['roc', roc, Roc, rocc], ['rsi', rsi, Rsi, rsic]]) {
+    // Stochastic (closing prices only: the source has no high / low).
+    if (stoch) {
+        svg.append('g')
+            .attr('class', 'stoch-axis')
+            .call(ySTAxis);
+
+        svg.append('g')
+            .attr('class', 'zoom-stoch')
+            .attr('fill', 'none')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-width', 1)
+            .selectAll('path')
+            .data([StochK, StochD])
+            .join('path')
+            .attr('stroke', (_d, i) => [stochkc, stochdc][i])
+            .attr('d', d3.line()
+                .defined(Number.isFinite)
+                .x(xrx)
+                .y(yStoch));
+
+        hr(20, yStoch, '#808080', 0.3);
+        hr(80, yStoch, '#808080', 0.3);
+    }
+
+    const oscFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
+    const oscText = {
+        roc: i => 'ROC: ' + oscFormat(Roc[i]),
+        rsi: i => 'RSI: ' + oscFormat(Rsi[i]),
+        stoch: i => 'Stoch' + ST + ' %K: ' + oscFormat(StochK[i]) + ', %D: ' + oscFormat(StochD[i])
+    };
+    const oscLegends = {};
+    for (const [key, enabled, data, color] of [['roc', roc, Roc, rocc], ['rsi', rsi, Rsi, rsic], ['stoch', stoch, StochK, stochkc]]) {
         if (!enabled) continue;
         const text = svg.append('g')
             .attr('class', 'rsrclegend ' + key + 'legend')
             .attr('transform', 'translate(' + padding + ',' + panelByKey[key].top + ')')
             .append('g').append('text').style('fill', color);
         offset = 0;
-        text.text(() => rrlatest(key.toUpperCase(), data)).attr('transform', offsetf);
-        if (key === 'roc') roclg = text; else rsilg = text;
+        text.text(() => oscText[key](0)).attr('transform', offsetf);
+        oscLegends[key] = text;
     }
 
     // crosshair
@@ -1298,7 +1482,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     }
 
     // Separate ROC and RSI hit areas; all panels share the same date pointer.
-    for (const key of ['roc', 'rsi']) {
+    for (const key of ['roc', 'rsi', 'stoch']) {
         const panel = panelByKey[key];
         if (!panel) continue;
         svg.append('rect')
@@ -1319,8 +1503,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             if (macd || macdh) {
                 macdlg.text(macdlglatest);
             }
-            if (roc) roclg.text(() => rrlatest('ROC', Roc));
-            if (rsi) rsilg.text(() => rrlatest('RSI', Rsi));
+            for (const key in oscLegends) oscLegends[key].text(oscText[key](0));
     }
     const pointerSeries = {
         vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
@@ -1372,6 +1555,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 switch (panel) {
                     case 'roc': return roundx(yRoc.invert(yval));
                     case 'rsi': return roundx(yRsi.invert(yval));
+                    case 'stoch': return roundx(yStoch.invert(yval));
                     case 'macd':
                         return fd(roundx(yMacd.invert(yval)));
                         break;
@@ -1409,8 +1593,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 macdlg.text(macdtxt);
             }
 
-            if (roc) roclg.text('ROC: ' + pointerFormat(yVonx.Roc));
-            if (rsi) rsilg.text('RSI: ' + pointerFormat(yVonx.Rsi));
+            for (const key in oscLegends) oscLegends[key].text(oscText[key](snapshot.index));
     }
     hidePointer();
     this.bindChartPointer(svg, paintPointer, hidePointer);
@@ -1419,11 +1602,45 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     svg.append('g').attr('class', 'trend-viewport')
         .attr('clip-path', `url(#${this.priceClipId})`).append('g')
         .attr('class', 'trendlines');
+    svg.select('.trend-viewport').insert('g', '.trendlines').attr('class', 'levels');
     svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
     this.bindTrendLines(svg, ddata, x, y,
         { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding }, currency, interval);
     const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
         { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding });
+
+    // Crossover signals. With two or more moving averages the first two are
+    // compared (shorter period = fast line); with one, price against it.
+    let updateSignals = () => {};
+    if (signals) {
+        const averages = [[MA_a, ma_a], [MA_b, ma_b], [MA_c, ma_c], [MA_d, ma_d]]
+            .filter(([data]) => data && data.length > 1).slice(0, 2).sort((p, q) => p[1] - q[1]);
+        const fast = averages.length === 2 ? averages[0][0] : (averages.length === 1 ? vdata : null);
+        const slow = averages.length ? averages[averages.length - 1][0] : null;
+        const marks = [
+            ...chart.crossings(fast, slow).map(mark => ({ ...mark, value: fast[mark.index], scale: y, panel: 'price' })),
+            ...((macd || macdh) && MacdCross ? chart.crossings(MacdCross.line, MacdCross.signal)
+                .map(mark => ({ ...mark, value: MacdCross.line[mark.index], scale: yMacd, panel: 'macd' })) : [])
+        ];
+        const triangle = d3.symbol().type(d3.symbolTriangle).size(34)();
+        const layer = svg.append('g').attr('class', 'signals').attr('pointer-events', 'none');
+        const nodes = layer.selectAll('path').data(marks).join('path').attr('d', triangle)
+            .attr('fill', mark => mark.up ? signalup : signaldown)
+            .attr('clip-path', mark => 'url(#' + chart.priceClipId + (mark.panel === 'price' ? '' : '-' + mark.panel) + '-marks)');
+        // Clip the unrotated wrapper, not the rotated symbol.
+        nodes.each(function () {
+            const wrapper = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            wrapper.setAttribute('clip-path', this.getAttribute('clip-path'));
+            this.removeAttribute('clip-path');
+            this.parentNode.insertBefore(wrapper, this); wrapper.appendChild(this);
+        });
+        updateSignals = () => nodes.attr('transform', mark =>
+            'translate(' + x(ddata[mark.index]) + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
+    }
+    const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
+        .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
+    markClip('', margin.top, height - padding);
+    if (panelByKey.macd) markClip('-macd', panelByKey.macd.top, panelByKey.macd.bottom);
 
     // Update only geometry during gestures; indicator values remain calculated
     // from the complete history, so zoom does not restart their warm-up periods.
@@ -1484,9 +1701,13 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.zoom-macd').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yMacd));
         svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRoc));
         svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRsi));
+        svg.select('.zoom-stoch').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yStoch));
         svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx);
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
+        drawGrid();
+        updateLastPrice();
+        updateSignals();
         chart.updateTrendLines();
         updateInfoMarkers();
         hidePointer();
@@ -1555,246 +1776,139 @@ const bollingerband = this.bollingerband.bind(this);
     return Math.round((number + Number.EPSILON) * 10) / 10;
 }
 
-// technical analysis functions 
-// EMA SMA DEMA MACDH ROC RSI Bollinger Bands
+// technical analysis functions
+// EMA SMA DEMA MACD ROC RSI Stochastic Bollinger Bands
+// All of them expect chronological data (oldest first) and return a shorter
+// array whose LAST element belongs to the last data point; indicatorSeries()
+// flips the result for drawing.
+average(data) {
+    let num = 0;
+    for (let i = 0; i < data.length; i++) num += Number(data[i]);
+    return num / data.length;
+}
 EMA(data, range) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
-    // if (!Array.isArray(data)) {
-    //     console.log("Not an array");
-    //     return 0;
-    // }
     if (data.length < range) {
         console.log("EMA: Range greater than array length.");
         return [];
     }
+    // Seed with the simple average of the first period, then smooth forward.
     let k = 2 / (range + 1),
-        num = average(data.slice(0, range)),
-        i = range,
+        num = this.average(data.slice(0, range)),
         e = [num];
-    for (i; i < data.length; i++) {
+    for (let i = range; i < data.length; i++) {
         num = (k * Number(data[i])) + ((1 - k) * num);
         e.push(num);
     }
     return e;
 }
-average(data) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
-    let len = data.length,
-        i = -1,
-        num = 0;
-    while (++i < len) num += Number(data[i]);
-    return num / len;
-}
 SMA(data, range) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
     if (data.length < range) {
         console.log("SMA: Range greater than array length.");
         return [];
     }
     const s = [];
-    for (let i = range - 1, n = data.length; i < n; i++) {
-        let slc = data.slice(i + 1 - range, i),
-            m = slc.reduce((a, b) => a + b) / slc.length;
-        s.push(roundn(m));
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+        sum += data[i];
+        if (i >= range) sum -= data[i - range];
+        if (i >= range - 1) s.push(sum / range);
     }
     return s;
 }
 DEMA(data, range) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
-    if (data.length < range) {
+    let firstEma = this.EMA(data, range),
+        secondEma = this.EMA(firstEma, range);
+    if (!secondEma.length) {
         console.log("DEMA: Range greater than array length.");
         return [];
     }
-    let firstEma = EMA(data, range),
-        secondEma = EMA(firstEma, range);
-    return firstEma.map((x, i) => (2 * x) - secondEma[i]).filter(v => !Number.isNaN(v));
+    // The second EMA starts later: align both series at their latest value.
+    const lag = firstEma.length - secondEma.length;
+    return secondEma.map((x, i) => (2 * firstEma[i + lag]) - x);
 }
 MACD(data) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-const {eshort,elong,esignal}=this.config;
-    let emashort = EMA(data, eshort),
-        emalong = EMA(data, elong),
-        macdline = emashort.map((x, i) => x - emalong[i]).filter(v => !Number.isNaN(v)),
-        macdsignal = EMA(macdline, esignal),
-        macdhist = macdline.map((x, i) => x - macdsignal[i]).filter(v => !Number.isNaN(v)),
-        macd = [];
-    macd.push({
-        macdline: macdline,
-        macdsignal: macdsignal,
-        macdhist: macdhist
-    });
-    return macd;
+    const { eshort, elong, esignal } = this.config;
+    let emashort = this.EMA(data, eshort),
+        emalong = this.EMA(data, elong),
+        // The two averages have different warm-up lengths; align them at the end.
+        n = Math.min(emashort.length, emalong.length),
+        macdline = Array.from({ length: n }, (_x, i) =>
+            emashort[emashort.length - n + i] - emalong[emalong.length - n + i]),
+        macdsignal = this.EMA(macdline, esignal),
+        lag = macdline.length - macdsignal.length,
+        macdhist = macdsignal.map((x, i) => macdline[i + lag] - x);
+    return [{ macdline: macdline, macdsignal: macdsignal, macdhist: macdhist }];
 }
 ROC(data, N) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
-    let i = 0,
-        rc = 0,
-        roc = [];
-    if (data.length < N) {
+    let roc = [];
+    if (data.length <= N) {
         console.log("ROC: Range greater than array length.");
         return [];
     }
-    // for the first N days
-    for (i; i < N; i++) {
-        rc = ((data[i] - data[i - N]) / data[i - N]) * 100;
-    }
-    // for the rest of the data
-    for (i = N; i < data.length; i++) {
-        rc = ((data[i] - data[i - N]) / data[i - N]) * 100;
-        roc.push({
-            roc: rc
-        });
+    for (let i = N; i < data.length; i++) {
+        roc.push({ roc: ((data[i] - data[i - N]) / data[i - N]) * 100 });
     }
     return roc;
 }
 RSI(data, N) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
-    let i = 0,
-        avg = 0,
+    let avg = 0,
         avl = 0,
         rsi = [];
-    if (data.length < N) {
+    if (data.length <= N) {
         console.log("RSI: Range greater than array length.");
         return [];
     }
-    // for the first "N" days
-    for (i; i < N; i++) {
+    const value = () => avl === 0 ? (avg === 0 ? 50 : 100) : 100 - (100 / (1 + avg / avl));
+    // first "N" changes: simple average of gains and losses
+    for (let i = 1; i <= N; i++) {
         const change = data[i] - data[i - 1];
-        if (change > 0) {
-            avg += change;
-        }
-        if (change < 0) {
-            avl -= change;
-        }
+        if (change > 0) avg += change; else avl -= change;
     }
     avg /= N;
     avl /= N;
-    // for the rest of the data
-    for (i = N; i < data.length; i++) {
+    rsi.push({ rsi: value() });
+    // the rest: Wilder smoothing (an unchanged price still decays both averages)
+    for (let i = N + 1; i < data.length; i++) {
         const change = data[i] - data[i - 1];
-        if (change > 0) {
-            avg = (avg * (N - 1) + change) / N;
-            avl = (avl * (N - 1)) / N;
-        }
-        if (change < 0) {
-            avl = (avl * (N - 1) - change) / N;
-            avg = (avg * (N - 1)) / N;
-        }
-        rsi.push({
-            rsi: 100 - (100 / (1 + (avg === 0 ? 0 : avg) / (avl === 0 ? 100 : avl)))
-        });
+        avg = (avg * (N - 1) + Math.max(change, 0)) / N;
+        avl = (avl * (N - 1) + Math.max(-change, 0)) / N;
+        rsi.push({ rsi: value() });
     }
     return rsi;
 }
+// Stochastic oscillator on closing prices: %K = position of the close inside
+// the N-period closing range, %D = 3-period simple average of %K.
+STOCH(data, N, smooth = 3) {
+    const k = [];
+    for (let i = N - 1; i < data.length; i++) {
+        let low = Infinity, high = -Infinity;
+        for (let j = i - N + 1; j <= i; j++) {
+            if (data[j] < low) low = data[j];
+            if (data[j] > high) high = data[j];
+        }
+        k.push(high > low ? (data[i] - low) / (high - low) * 100 : 50);
+    }
+    return { k, d: k.length >= smooth ? this.SMA(k, smooth) : [] };
+}
 bollingerband(data, N, K) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-
     const bands = [];
     if (N <= 1) {
         console.log("BB: N period of moving average should be grater than 1.");
         return [];
     }
     for (let i = N - 1, n = data.length; i < n; i++) {
-        let slc = data.slice(i + 1 - N, i),
+        let slc = data.slice(i + 1 - N, i + 1),
             m = slc.reduce((a, b) => a + b) / slc.length,
-            s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length),
-            lband = m - (s * K),
-            uband = m + (s * K);
-        bands.push({
-            low: roundn(lband),
-            high: roundn(uband)
-        });
+            s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length);
+        bands.push({ low: m - (s * K), high: m + (s * K) });
     }
     return bands;
 }
 
 }
+HistoricalPriceChart.storageKey = 'fxchart.v1';
+HistoricalPriceChart.textControls = ['ma_a','ma_b','ma_c','ma_d','bb_N','bb_K','macd_fast','macd_slow','macd_signal','roc_values','rsi_values','stoch_values'];
+HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals'];
 window.HistoricalPriceChart=HistoricalPriceChart;
 const startChart=()=>{
 window.historicalPriceChart?.destroy();

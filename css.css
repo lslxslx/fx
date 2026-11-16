@@ -36,6 +36,8 @@
 		--chart-title-color: #3e57c9;
 		--copyr-color: #818181;
 		--idata-border-color: #ff9f9f;
+		--grid-color: #ececec;
+		--level-color: #b07a1e;
 	}
 }
 
@@ -65,6 +67,8 @@
 		--chart-title-color: #3e57c9;
 		--copyr-color: #818181;
 		--idata-border-color: #300;
+		--grid-color: #111a2b;
+		--level-color: #c9a227;
 	}
 
 	::-webkit-calendar-picker-indicator {
@@ -454,7 +458,8 @@ input[name=interval]+label::after {
 #macd:checked~span,
 #macdh:checked~span,
 #rsi:checked~#rsi_values,
-#roc:checked~#roc_values {
+#roc:checked~#roc_values,
+#stoch:checked~#stoch_values {
 	border-color: var(--menu-ck-color);
 }
 
@@ -490,6 +495,28 @@ svg text {
 .macdgrid,
 .rsrcgrid {
 	cursor: crosshair;
+}
+
+
+/* grid, latest price tag, horizontal levels */
+
+.price-grid line {
+	stroke: var(--grid-color);
+	stroke-width: 1;
+}
+
+.last-price text {
+	font-weight: 600;
+}
+
+.level-line {
+	stroke: var(--level-color);
+	stroke-width: 1;
+	stroke-dasharray: 6 4;
+}
+
+.level-label {
+	fill: var(--level-color);
 }
 
 

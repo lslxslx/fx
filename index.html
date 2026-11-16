@@ -111,8 +111,16 @@
                     <br>
                     Relative Strength Index (RSI) calculation by default is based on 14-day average.
                     <br>
+                    Stochastic (Stoch) calculation by default is based on the 14-day (week / month) range of closing prices; %D is the 3-period average of %K.
                     <br>
-                    Use the secondary click to draw a (trend) line. To delete, hold down the alt key (option on mac) and click on it.</p>
+                    Signals: &#9650; / &#9660; mark where the faster of the first two moving averages crosses above / below the slower one (with a single moving average: price against it), and where the MACD line crosses its signal line.
+                    <br>
+                    <br>
+                    Use the secondary click to draw a (trend) line. To delete, hold down the alt key (option on mac) and click on it.
+                    <br>
+                    Hold down the shift key and click to add a horizontal (support / resistance) level. To delete, hold down the alt key and click on it.
+                    <br>
+                    Settings, lines and levels are remembered in this browser.</p>
                     </details>
                     <input type="checkbox" id="bband">
                     <label for="bband" data-abbr="BB" data-long="Bollinger Bands"></label>
@@ -142,6 +150,11 @@
                     <input type="checkbox" id="rsi">
                     <label for="rsi">RSI</label>
                     <input type="text" id="rsi_values" placeholder="14" title="N period of moving average">
+                    <input type="checkbox" id="stoch">
+                    <label for="stoch" title="Stochastic oscillator">Stoch</label>
+                    <input type="text" id="stoch_values" placeholder="14" title="N period of closing range">
+                    <input type="checkbox" id="signals">
+                    <label for="signals" title="Mark moving average and MACD crossovers">Signals</label>
                 </div>
             </div>
         </menu>
