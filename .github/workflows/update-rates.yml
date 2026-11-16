@@ -8,6 +8,9 @@ on:
         type: boolean
         default: true
 
+  schedule:
+    - cron: '1 13,17 * * 1-5'
+
 permissions: {}
 
 concurrency:
