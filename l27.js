@@ -1,4 +1,4 @@
-// Display only: keep JSON and calculation values numeric and unrounded.
+// Display formatting only; historical values and indicator calculations stay numeric.
 const formatFxNumber = (value, grouped = true) => Number.isFinite(value)
   ? d3.format(grouped ? ',.2f' : '.2f')(value) : '—';
 
@@ -104,7 +104,7 @@ class HistoricalPriceChart {
     this.state = { loading: false, requestId: 0, currency: null, interval: null };
     this.listeners = [];
     this.zoomTransform = d3.zoomIdentity;
-    this.priceViewport = { mode: 'auto', domain: null };
+    this.pricePan = 0; // Translation as a fraction of the price panel height, never Y zoom.
     this.infoEvents = [];
     this.infoRequestId = 0;
     this.trendLines = [];
@@ -175,7 +175,7 @@ class HistoricalPriceChart {
       this.currentData = this.parseData(rows, params.c);
       this.calculationCache = null;
       this.zoomTransform = d3.zoomIdentity;
-      this.priceViewport = { mode: 'auto', domain: null };
+      this.pricePan = 0;
       this.state.currency = params.c;
       this.state.interval = params.i;
       // Completed lines are scoped to currency and interval. Cancel only the
@@ -265,7 +265,6 @@ class HistoricalPriceChart {
     if (this.container.offsetWidth <= 0) { this.layoutPending = true; return; }
     this.layoutPending = false;
     this.pointerCleanup?.();
-    this.axisCleanup?.();
     this.infoDialog?.close();
     this.lastLayout = { width: this.container.offsetWidth, height: window.innerHeight };
     this.container.querySelector('[data-chart-error]')?.remove();
@@ -308,58 +307,6 @@ class HistoricalPriceChart {
     const tx = range[0] * (1 - transform.k) +
       (transform.x - oldRange[0] * (1 - transform.k)) * ratio;
     return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
-  }
-
-  priceBounds(prices, range, bounds, padding = 0.08) {
-    // Include interpolated boundary values, not offscreen price extremes.
-    const last = prices.length - 1, step = last > 0 ? (range[1] - range[0]) / last : 0;
-    let low = Infinity, high = -Infinity;
-    const include = value => {
-      if (Number.isFinite(value)) { low = Math.min(low, value); high = Math.max(high, value); }
-    };
-    if (step) {
-      const edges = bounds.map(pixel => Math.max(0, Math.min(last, (pixel - range[0]) / step)));
-      const start = Math.min(...edges), end = Math.max(...edges);
-      for (let i = Math.ceil(start); i <= Math.floor(end); i++) include(prices[i]);
-      for (const index of [start, end]) {
-        const a = Math.floor(index), b = Math.ceil(index), weight = index - a;
-        include(a === b ? prices[a] : prices[a] * (1 - weight) + prices[b] * weight);
-      }
-    } else prices.forEach(include);
-    if (!Number.isFinite(low)) prices.forEach(include);
-    if (!Number.isFinite(low)) return [0, 1];
-    const room = high > low ? (high - low) * padding : Math.max(Math.abs(low) * 0.001, 0.01);
-    return [low - room, high + room];
-  }
-
-  shiftPriceDomain(domain, pixels, plotHeight) {
-    if (!(plotHeight > 0) || !Number.isFinite(pixels)) return domain.slice();
-    const delta = pixels * (domain[1] - domain[0]) / plotHeight;
-    const result = domain.map(value => value + delta);
-    return result.every(Number.isFinite) ? result : domain.slice();
-  }
-
-  stretchPriceDomain(domain, factor, anchor = (domain[0] + domain[1]) / 2, reference = domain) {
-    const span = domain[1] - domain[0];
-    if (!(span > 0) || !(factor > 0) || !Number.isFinite(factor) || !Number.isFinite(anchor)) return domain.slice();
-    const minSpan = Math.max(0.02, Math.abs(anchor) * Number.EPSILON * 128);
-    const maxSpan = Math.max(minSpan, (reference[1] - reference[0]) * 100);
-    const nextSpan = Math.max(minSpan, Math.min(maxSpan, span * factor));
-    const result = domain.map(value => anchor + (value - anchor) * nextSpan / span);
-    return result.every(Number.isFinite) && result[1] > result[0] ? result : domain.slice();
-  }
-
-  panelLayout(enabled, priceBottom, panelHeight = 90) {
-    let cursor = priceBottom + 24;
-    const panels = [];
-    for (const key of ['macd', 'rsi', 'roc']) {
-      if (!(key === 'macd' ? enabled.macd || enabled.macdh : enabled[key])) continue;
-      const top = cursor + 16, bottom = top + panelHeight;
-      panels.push({ key, legendY: cursor, top, bottom });
-      cursor = bottom + 24;
-    }
-    const bottom = panels.length ? panels[panels.length - 1].bottom : priceBottom;
-    return { panels, bottom, dateY: bottom + 12, height: bottom + 42 };
   }
 
   trendPoint(px, py, dates, x, y, bounds, clamp = false) {
@@ -702,7 +649,7 @@ class HistoricalPriceChart {
       if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id);
     };
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
-      if (event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle, .price-axis-hit')) { hide(); return; }
+      if (event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle')) { hide(); return; }
       if (event.type === 'pointerdown') {
         if (event.button !== 0) { hide(); return; }
         if (event.pointerType !== 'mouse') {
@@ -712,7 +659,7 @@ class HistoricalPriceChart {
           event.preventDefault();
         }
       }
-      if (this.zooming || this.axisDragging || this.drawingTrend || this.trendEdit || active.size > 1 ||
+      if (this.zooming || this.drawingTrend || this.trendEdit || active.size > 1 ||
           (event.pointerType === 'mouse' && event.buttons)) { hide(); return; }
       paint(event);
     });
@@ -789,8 +736,6 @@ class HistoricalPriceChart {
     clearTimeout(this.layoutTimer);
     this.resizeObserver?.disconnect();
     this.pointerCleanup?.();
-    this.axisCleanup?.();
-    this.resetPriceView = null;
     this.infoDialog?.close();
     this.infoDialog?.remove();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
@@ -882,357 +827,689 @@ const bollingerband = this.bollingerband.bind(this);
 }
 
 drawChart(values, currency) {
-    const chart = this, series = this.indicatorSeries(values), c = this.config;
+const parseData = this.parseData.bind(this);
+const roundn = this.roundn.bind(this);
+const roundx = this.roundx.bind(this);
+const EMA = this.EMA.bind(this);
+const average = this.average.bind(this);
+const SMA = this.SMA.bind(this);
+const DEMA = this.DEMA.bind(this);
+const MACD = this.MACD.bind(this);
+const ROC = this.ROC.bind(this);
+const RSI = this.RSI.bind(this);
+const bollingerband = this.bollingerband.bind(this);
+let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,bband,macd,macdh,roc,rsi}=this.config;
+const svgvB=this.container, interval=this.state.interval, chart=this;
+this.drawingTrend = Boolean(this.trendDraft);
+const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
+    const series = this.indicatorSeries(values);
+    const limdata = 50,
+        macdhbinsl = 1500,
+        macdhbinsm = 900,
+        minwidth = 300, // screen
+        maxlgwidth = 1050, // screen legend
+        legendoffsetw = 23,
+        legendoffseth = 1,
+        // Keep the original margin for ordinary FX prices; allow large XAU labels
+        // to show both decimal digits instead of clipping the final character.
+        margin = { top: 30, right: Math.max(60,
+            Math.max(formatFxNumber(series.min).length, formatFxNumber(series.max).length) * 6 + 14), bottom: 60 },
+        width = svgvB.offsetWidth - margin.right,
+        // Do not measure content height: it includes panels from the last render.
+        height = Math.max(minwidth, window.innerHeight * 0.55) - margin.top,
+        padding = 10,
+        indicator = { top: height, height: 90 },
+        ibottom = { bottom: indicator.top + indicator.height + padding };
+
     const { vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
-        MacdLine, MacdSignal, MacdHist, Roc, Rsi, enabled } = series;
-    const padding = 10;
-    const marginRight = Math.max(80, Math.min(150,
-        Math.max(formatFxNumber(series.min).length, formatFxNumber(series.max).length) * 7 + 24));
-    const width = Math.max(90, this.container.offsetWidth - marginRight);
-    const fullWidth = width + marginRight;
-    // Content height never feeds back into the next render.
-    const priceHeight = Math.max(300, window.innerHeight * 0.55) - 40;
-    const datalength = ddata.length, interval = this.state.interval;
-    const colors = { price: '#38678f', ma_a: '#e04b4b', ma_b: '#00b061', ma_c: '#ff7dcd',
-        ma_d: '#a39354', band: '#909090', signal: '#ff8084', macd: '#0061cb',
-        histogram: '#808080', roc: '#f28f3b', rsi: '#808080' };
-    const periodLabel = ({wave: 'W', mave: 'M', quave: 'Q'})[interval] || 'D';
-    const formatDate = d3.timeFormat('%a, %d %b %Y');
-    const svg = this.svg.attr('class', 'chart-svg').attr('preserveAspectRatio', 'xMinYMin meet');
-    this.drawingTrend = Boolean(this.trendDraft);
-    this.priceViewport ||= { mode: 'auto', domain: null };
-
-    const mainEntries = [{ key: 'vdata', data: vdata, color: colors.price }];
-    for (const [suffix, data] of [['a', MA_a], ['b', MA_b], ['c', MA_c], ['d', MA_d]]) {
-        if (data !== false && data != null) mainEntries.push({ key: 'MA_' + suffix, data,
-            label: this.SwMALegend(c['mma_' + suffix]) + c['ma_' + suffix], color: colors['ma_' + suffix] });
+        MacdLine, MacdSignal, MacdHist, Roc, Rsi } = series;
+    ({ bband, macd, macdh, roc, rsi } = series.enabled);
+    const xrx = (_d, i) => x(ddata[i]);
+    // Keep the original panel dimensions and appearance. Only separate ROC / RSI.
+    const panels = [];
+    let panelTop = indicator.top;
+    for (const [key, enabled] of [['macd', macd || macdh], ['roc', roc], ['rsi', rsi]]) {
+        if (!enabled) continue;
+        panels.push({ key, top: panelTop, bottom: panelTop + indicator.height + padding });
+        panelTop += indicator.height + padding * 2;
     }
-    if (enabled.bband) mainEntries.push(
-        { key: 'UpperBand', label: 'Upper Band', data: UpperBand, color: colors.band },
-        { key: 'LowerBand', label: 'Lower Band', data: LowerBand, color: colors.band });
-    const mainText = (entry, index = 0) => entry.key === 'vdata'
-        ? `${formatDate(ddata[index])}, ${currency}/ALL: ${formatFxNumber(vdata[index])} (${periodLabel})`
-        : `${entry.label}: ${formatFxNumber(entry.data[index])}`;
-    const legend = svg.append('g').attr('class', 'legend').attr('pointer-events', 'none');
-    const legendTexts = legend.selectAll('text').data(mainEntries).join('text')
-        .attr('fill', entry => entry.color).text(entry => mainText(entry));
-    let legendX = padding, legendY = 18;
-    legendTexts.each(function () {
-        const textWidth = this.getComputedTextLength();
-        if (legendX > padding && legendX + textWidth > fullWidth - padding) { legendX = padding; legendY += 16; }
-        d3.select(this).attr('x', legendX).attr('y', legendY);
-        legendX += textWidth + 20;
-    });
-    const priceTop = Math.max(30, legendY + 12), priceBottom = priceTop + priceHeight;
-    const layout = this.panelLayout(enabled, priceBottom);
-    svg.attr('viewBox', `0 0 ${fullWidth} ${layout.height}`);
+    const panelByKey = Object.fromEntries(panels.map(panel => [panel.key, panel]));
+    const lowerBottom = panels.length ? panels[panels.length - 1].bottom : height - padding;
+    const dateY = panels.length ? lowerBottom + padding : height;
 
-    const x = d3.scalePoint().domain(ddata).range([width - padding, padding]);
+    // Price-only bounds keep the scale stable when overlays are toggled.
+    let MinYScale = series.min,
+        MaxYScale = series.max,
+        PricePadding = MaxYScale > MinYScale
+            ? (MaxYScale - MinYScale) * 0.08
+            : Math.max(Math.abs(MinYScale) * 0.01, 0.01),
+        // scale MacdY
+        MinSignal = macd == true ? d3.min(...MacdSignal) : false,
+        MaxSignal = macd == true ? d3.max(...MacdSignal) : false,
+        MinLine = macd == true ? d3.min(...MacdLine) : false,
+        MaxLine = macd == true ? d3.max(...MacdLine) : false,
+        MinHist = macdh == true ? (typeof d3.min(...MacdHist) !== 'undefined' ? d3.min(...MacdHist) : null) : false,
+        MaxHist = macdh == true ? (typeof d3.max(...MacdHist) !== 'undefined' ? d3.max(...MacdHist) : null) : false,
+        MinMacdY = MinLine < MinSignal ? (MinLine < MinHist ? MinLine : MinHist) : (MinSignal < MinHist ? MinSignal : MinHist),
+        MaxMacdY = MaxLine > MaxSignal ? (MaxLine > MaxHist ? MaxLine : MaxHist) : (MaxSignal > MaxHist ? MaxSignal : MaxHist),
+        // scale ROC
+        MinRocY = roc == true ? (typeof d3.min(Roc) !== 'undefined' ? d3.min(Roc) : null) : false,
+        MaxRocY = roc == true ? (typeof d3.max(Roc) !== 'undefined' ? d3.max(Roc) : null) : false;
+
+    // x Axis format
+    let datalength = ddata.length,
+        format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
+        tformat = datalength < limdata ? format.daily : format.monthly;
+
+    // Price chart, bollinger and ema
+    let yAxis = g => g
+        .attr('transform', 'translate(' + width + ', 0)')
+        .call(d3.axisRight(y)
+            .tickFormat(d3.format(",.2f"))
+            .tickSizeOuter(0));
+
+    let xAxis = g => g
+        .attr('transform', 'translate(0,' + dateY + ')')
+        .call(d3.axisBottom(x)
+            .tickSizeOuter(0)
+            .tickValues(visibleTicks())
+            .tickFormat(date => (datalength / (chart.zoomTransform?.k || 1) < limdata ? format.daily : tformat)(date)));
+
+    let x = d3.scalePoint()
+        .domain(ddata)
+        .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
     const baseRange = x.range().slice();
     this.zoomTransform = this.resizeZoom(baseRange);
     const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
+    // Invert by observation index, not elapsed time (weekends remain gap-free).
+    x.invert = pixel => {
+        const range = x.range();
+        const index = datalength < 2 ? 0 : Math.round((pixel - range[0]) / (range[1] - range[0]) * (datalength - 1));
+        return ddata[Math.max(0, Math.min(datalength - 1, index))];
+    };
+    function visibleTicks() {
+        const visible = Array.from(ddata).filter(date => x(date) >= plotLeft - 0.5 && x(date) <= plotRight + 0.5);
+        const step = Math.max(1, Math.ceil(visible.length / Math.max(2, Math.floor((plotRight - plotLeft) / 140))));
+        return visible.filter((_d, i) => i % step === 0);
+    }
+
+    let y = d3.scaleLinear()
+        .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
+        .range([height - padding, margin.top]);
+    const baseY = y.copy(), priceHeight = height - padding - margin.top;
+    this.pricePan = Number.isFinite(this.pricePan) ? this.pricePan : 0;
+    const applyPricePan = () => {
+        // Same rescaleY mechanism as chart.js, with k fixed at 1: translate only.
+        y.domain(d3.zoomIdentity.translate(0, chart.pricePan * priceHeight).rescaleY(baseY).domain());
+    };
+    applyPricePan();
+    this.plotGeometry = { x: baseRange.slice(), y: y.range().slice() };
+    this.panelGeometry = [{ key: 'price', top: margin.top, bottom: height - padding }, ...panels];
+
+    // MACD
+    let yMAxis = g => g
+        .attr('transform', 'translate(' + width + ', 0)')
+        .call(d3.axisRight(yMacd).ticks(3).tickSizeOuter(0));
+
+    let yMacd = d3.scaleLinear()
+        .domain([MinMacdY, MaxMacdY])
+        .range([ibottom.bottom, indicator.top])
+        .nice();
+
+    // ROC
+    let yRCAxis = g => g
+        .attr('transform', 'translate(' + width + ', 0)')
+        .call(d3.axisRight(yRoc).ticks(3).tickSizeOuter(0));
+
+    // RSI
+    let yRAxis = g => g
+        .attr('transform', 'translate(' + width + ', 0)')
+        .call(d3.axisRight(yRsi).ticks(3).tickSizeOuter(0));
+
+    let yRoc = d3.scaleLinear()
+        .domain([MinRocY, MaxRocY])
+        .range([panelByKey.roc?.bottom ?? ibottom.bottom, panelByKey.roc?.top ?? indicator.top])
+        .nice();
+
+    let yRsi = d3.scaleLinear()
+        .domain([0, 100])
+        .range([panelByKey.rsi?.bottom ?? ibottom.bottom, panelByKey.rsi?.top ?? indicator.top])
+        .nice();
+    this.plotScales = { x, y, ...(macd || macdh ? { macd: yMacd } : {}),
+        ...(roc ? { roc: yRoc } : {}), ...(rsi ? { rsi: yRsi } : {}) };
+
+    let line = d3.line()
+        .defined(Number.isFinite)
+        .x(xrx)
+        .y(y);
+
+    const svg = this.svg
+        .attr('preserveAspectRatio', 'xMinYMin meet')
+        .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + (dateY + margin.top));
+
+    svg.append('defs').append('clipPath')
+        .attr('id', this.priceClipId)
+        .attr('clipPathUnits', 'userSpaceOnUse')
+        .append('rect')
+        .attr('x', Math.min(...x.range()))
+        .attr('y', margin.top)
+        .attr('width', Math.abs(x.range()[1] - x.range()[0]))
+        .attr('height', Math.max(0, height - padding - margin.top));
+
+    svg.append('g')
+        .attr('class', 'date-axis')
+        .call(xAxis)
+        .attr('text-anchor', 'start');
+
+    svg.append('g')
+        .attr('class', 'price-axis')
+        .call(yAxis);
+
+    // indicator colors
+    let price = '#38678f',
+        mca = MA_a != 0 ? '#e04b4b' : '',
+        mcb = MA_b != 0 ? '#00b061' : '',
+        mcc = MA_c != 0 ? '#ff7dcd' : '',
+        mcd = MA_d != 0 ? '#a39354' : '',
+        ubbc = UpperBand != 0 ? '#909090' : '',
+        lbbc = LowerBand != 0 ? '#909090' : '',
+        macdsc = MacdSignal != 0 ? '#ff8084' : '',
+        macdlc = MacdLine != 0 ? '#0061cb' : '',
+        macdhc = MacdHist != 0 ? '#907070' : '',
+        macdhcp = MacdHist != 0 ? '#708070' : '',
+        macdhistlegc = MacdHist != 0 ? '#808080' : '',
+        rocc = Roc != 0 ? '#f28f3b' : '',
+        rsic = Rsi != 0 ? '#505050' : '';
+
+    // bollinger band area
+    if (bband) {
+        svg.append('g')
+            .attr('class', 'abbc')
+            .attr('clip-path', `url(#${this.priceClipId})`)
+            .selectAll('path')
+            .data([BandData])
+            .join('path')
+            .attr('d', d3.area()
+                .x(xrx)
+                .y0((_d, i) => y(BandData[i].high))
+                .y1((_d, i) => y(BandData[i].low)));
+    }
+
+    svg.append('g')
+        .attr('fill', 'none')
+        .attr('class', 'dline')
+        .attr('clip-path', `url(#${this.priceClipId})`)
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-width', 1)
+        .selectAll('path')
+        .data([vdata, MA_a, MA_b, MA_c, MA_d, LowerBand, UpperBand])
+        .join('path')
+        .attr('stroke', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc][i])
+        .attr('d', line);
+
+    // horizontal line function
+    function hr(y, yscale, color, swd) {
+        let dateRange = [d3.max(ddata), d3.min(ddata)];
+        svg.append('g')
+            .attr('stroke-width', 0.3)
+            .selectAll('path')
+            .data([[y, y]])
+            .join('path')
+            .attr('stroke', color)
+            .attr('stroke-width', swd)
+            .attr('d', d3.line()
+                .x((_d, i) => x(dateRange[i]))
+                .y(yscale));
+    }
+
+    // price chart legend
+    const lglatest = function (_d, i) {
+        let formatdate = d3.timeFormat('%a, %d %b %Y'),
+            fd = formatFxNumber,
+            txt_datenprice = formatdate(ddata[0]) + ', ' + currency + '/ALL: ' + fd(vdata[0]) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
+            txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(roundn(MA_a[0])) : '',
+            txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(roundn(MA_b[0])) : '',
+            txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(roundn(MA_c[0])) : '',
+            txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(roundn(MA_d[0])) : '',
+            txt_upbb = !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(UpperBand[0]) : '',
+            txt_lobb = !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(LowerBand[0]) : '';
+        return [txt_datenprice, txt_ma_a, txt_ma_b, txt_ma_c, txt_ma_d, txt_upbb, txt_lobb].filter(x => x !== '')[i];
+    }
+
+    // macdh chart legend
+    const macdlglatest = function (_d, i) {
+        let fd = d3.format(','),
+            line = macd ? MacdLine[0][0] : 0,
+            signal = macd ? MacdSignal[0][0] : 0,
+            histogram = macdh ? MacdHist[0][0] : 0,
+            txt_macdl = macd ? 'MACD Line: ' + fd(roundn(line)) : 0,
+            txt_macds = macd ? 'MACD Signal: ' + fd(roundn(signal)) : 0,
+            txt_macdh = macdh ? 'MACD Histogram: ' + fd(roundn(histogram)) : 0;
+        return [txt_macdl, txt_macds, txt_macdh].filter(x => x != 0)[i];
+    }
+
+    // Keep the original legend text, now attached to each indicator's own panel.
+    const rrlatest = (name, data) => name + ': ' +
+        (Number.isFinite(data[0]) ? d3.format(',')(roundn(data[0])) : '—');
+
+    // legend global f
+    let offset = 0,
+        nodeWidth = (d) => d.getBBox().width,
+        nodeHeight = (d) => d.getBBox().height;
+    const offsetf = function () {
+        let x = offset;
+        if (svgvB.offsetWidth > maxlgwidth) {
+            offset += nodeWidth(this) + legendoffsetw;
+            return 'translate(' + x + ', 0)';
+        }
+        else {
+            offset += nodeHeight(this) + legendoffseth;
+            return 'translate(0, ' + x + ')';
+        }
+    }
+
+    // price chart legend
+    const legend = svg.append('g')
+        .attr('class', 'legend')
+        .attr('transform', 'translate(' + padding + ',' + margin.top + ')');
+
+    const lg = legend.selectAll('g')
+        .data([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand].filter(x => x != 0 || !isNaN(x)))
+        .join('g')
+        .append('text')
+        .style('fill', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc].filter(x => x !== '')[i]);
+
+    offset = 0; // legend text offset
+    lg.text(lglatest)
+        .attr('transform', offsetf);
+
+    let macdlg,
+        roclg, rsilg;
+
+    // MACD
+    if (macd || macdh) {
+        svg.append('g')
+            .attr('class', 'macd-axis')
+            .call(yMAxis);
+
+        if (macdh) {
+            svg.append('g')
+                .attr('class', 'zoom-histogram')
+                .selectAll('rect')
+                .data(...MacdHist)
+                .join('rect')
+                .attr('class', 'macdhc')
+                .attr('x', xrx)
+                .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+                .attr('height', d => Math.abs(yMacd(d) - yMacd(0)))
+                .attr('width', (datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5)))
+                .attr('transform', 'translate(' + (datalength > macdhbinsl ? -1 : (datalength > macdhbinsm ? -1.5 : -2)) + ', 0)')
+                .attr('fill', d => { return d > 0 ? macdhcp : macdhc });
+        }
+
+        if (macd) {
+            svg.append('g')
+                .attr('class', 'zoom-macd')
+                .attr('fill', 'none')
+                .attr('stroke-linejoin', 'round')
+                .attr('stroke-linecap', 'round')
+                .attr('stroke-width', 1)
+                .selectAll('path')
+                .data([...MacdLine, ...MacdSignal])
+                .join('path')
+                .attr('stroke', (_d, i) => {
+                    return [macdlc, macdsc][i];
+                })
+                .attr('d', d3.line()
+                    .defined(Number.isFinite)
+                    .x(xrx)
+                    .y(yMacd));
+        }
+
+        hr(0, yMacd, '#808080', 0.3);
+
+        // macd legend
+        const macdlegend = svg.append('g')
+            .attr('class', 'macdlegend')
+            .attr('transform', 'translate(' + padding + ',' + indicator.top + ')');
+
+        macdlg = macdlegend.selectAll('g')
+            .data([MacdLine, MacdSignal, MacdHist])
+            .join('g')
+            .append('text')
+            .style('fill', (_d, i) => [macdlc, macdsc, macdhistlegc].filter(x => x !== '')[i]);
+
+        offset = 0; // macd legend text offset
+        macdlg.text(macdlglatest)
+            .attr('transform', offsetf);
+    }
+
+    // ROC
+    if (roc) {
+        svg.append('g')
+            .attr('class', 'roc-axis')
+            .call(yRCAxis);
+
+        svg.append('g')
+            .attr('class', 'zoom-roc')
+            .attr('fill', 'none')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-width', 1)
+            .selectAll('path')
+            .data([Roc])
+            .join('path')
+            .attr('stroke', (_d, i) => {
+                return [rocc][i];
+            })
+            .attr('d', d3.line()
+                .defined(Number.isFinite)
+                .x(xrx)
+                .y(yRoc));
+
+        hr(0, yRoc, '#f28f3b', 0.3);
+    }
+
+    // RSI
+    if (rsi) {
+        svg.append('g')
+            .attr('class', 'rsi-axis')
+            .call(yRAxis);
+
+        svg.append('g')
+            .attr('class', 'zoom-rsi')
+            .attr('fill', 'none')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-width', 1)
+            .selectAll('path')
+            .data([Rsi])
+            .join('path')
+            .attr('stroke', (_d, i) => {
+                return [rsic][i];
+            })
+            .attr('d', d3.line()
+                .defined(Number.isFinite)
+                .x(xrx)
+                .y(yRsi));
+
+        hr(30, yRsi, '#808080', 0.3);
+        hr(70, yRsi, '#808080', 0.3);
+    }
+
+    for (const [key, enabled, data, color] of [['roc', roc, Roc, rocc], ['rsi', rsi, Rsi, rsic]]) {
+        if (!enabled) continue;
+        const text = svg.append('g')
+            .attr('class', 'rsrclegend ' + key + 'legend')
+            .attr('transform', 'translate(' + padding + ',' + panelByKey[key].top + ')')
+            .append('g').append('text').style('fill', color);
+        offset = 0;
+        text.text(() => rrlatest(key.toUpperCase(), data)).attr('transform', offsetf);
+        if (key === 'roc') roclg = text; else rsilg = text;
+    }
+
+    // crosshair
+    let crssh = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none'),
+        label = crssh.append('text'),
+        crosshair = crssh.append('g')
+            .attr('stroke-width', 0.5);
+
+    // horizontal line
+    crosshair.append('line')
+        .attr('id', 'crsx')
+        .attr('stroke', '#cdcdcd');
+
+    // vertical line
+    crosshair.append('line')
+        .attr('id', 'crsy')
+        .attr('stroke', '#cdcdcd');
+
+    // grid
+    svg.append('rect')
+        .attr('class', 'grid')
+        .attr('fill', 'none')
+        .attr('pointer-events', 'all')
+        .attr('x', padding)
+        .attr('y', margin.top)
+        .attr('width', x.range()[0] - padding)
+        .attr('height', y.range()[0] - margin.top);
+
+    // macd grid
+    if (macd || macdh) {
+        svg.append('rect')
+            .attr('class', 'macdgrid')
+            .attr('fill', 'none')
+            .attr('pointer-events', 'all')
+            .attr('x', padding)
+            .attr('y', indicator.top)
+            .attr('width', x.range()[0] - padding)
+            .attr('height', yMacd.range()[0] - indicator.top);
+    }
+
+    // Separate ROC and RSI hit areas; all panels share the same date pointer.
+    for (const key of ['roc', 'rsi']) {
+        const panel = panelByKey[key];
+        if (!panel) continue;
+        svg.append('rect')
+            .attr('class', 'rsrcgrid ' + key + 'grid')
+            .attr('fill', 'none')
+            .attr('pointer-events', 'all')
+            .attr('x', padding)
+            .attr('y', panel.top)
+            .attr('width', x.range()[0] - padding)
+            .attr('height', panel.bottom - panel.top);
+    }
+
+    function hidePointer() {
+            chart.state.pointerIndex = null;
+            crosshair.style('display', 'none');
+            label.style('display', 'none');
+            lg.text(lglatest);
+            if (macd || macdh) {
+                macdlg.text(macdlglatest);
+            }
+            if (roc) roclg.text(() => rrlatest('ROC', Roc));
+            if (rsi) rsilg.text(() => rrlatest('RSI', Rsi));
+    }
+    const pointerSeries = {
+        vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+        MacdLine: macd ? MacdLine[0] : null,
+        MacdSignal: macd ? MacdSignal[0] : null,
+        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi
+    };
+    function paintPointer(event) {
+            const [rawX, yval] = d3.pointer(event, svg.node());
+            const panel = chart.panelGeometry.find(item => yval >= item.top && yval <= item.bottom)?.key;
+            if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
+            const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
+            if (!snapshot) { hidePointer(); return; }
+            chart.state.pointerIndex = snapshot.index;
+            const xval = snapshot.x, yVonx = snapshot.values;
+            crosshair.style('display', null);
+            label.style('display', null);
+
+            const sx = xval < width / 2 ? 1 : -1;
+            const sy = yval < height / 2 ? 2 : -1;
+            const pointerFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
+
+            function maintxt(_d, i) {
+                let formatdate = d3.timeFormat('%a, %d %b %Y'),
+                    fd = formatFxNumber,
+                    txt_datenprice = formatdate(snapshot.date) + ', ' + currency + '/ALL: ' + fd(yVonx.vdata) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
+                    txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(yVonx.MA_a) : '',
+                    txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(yVonx.MA_b) : '',
+                    txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(yVonx.MA_c) : '',
+                    txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(yVonx.MA_d) : '',
+                    txt_upbb = !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(yVonx.UpperBand) : '',
+                    txt_lobb = !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(yVonx.LowerBand) : '';
+                return [txt_datenprice, txt_ma_a, txt_ma_b, txt_ma_c, txt_ma_d, txt_upbb, txt_lobb].filter(x => x !== '')[i];
+            }
+
+            function macdtxt(_d, i) {
+                let fd = pointerFormat,
+                    line = macd ? yVonx.MacdLine : 0,
+                    signal = macd ? yVonx.MacdSignal : 0,
+                    histogram = macdh ? yVonx.MacdHist : 0,
+                    txt_macdl = macd ? 'MACD Line: ' + fd(line) : 0,
+                    txt_macds = macd ? 'MACD Signal: ' + fd(signal) : 0,
+                    txt_macdh = macdh ? 'MACD Histogram: ' + fd(histogram) : 0;
+                return [txt_macdl, txt_macds, txt_macdh].filter(x => x != 0)[i];
+            }
+
+            function linelabel() {
+                let fd = d3.format(',');
+                switch (panel) {
+                    case 'roc': return roundx(yRoc.invert(yval));
+                    case 'rsi': return roundx(yRsi.invert(yval));
+                    case 'macd':
+                        return fd(roundx(yMacd.invert(yval)));
+                        break;
+                    default:
+                        return d3.format(',.2f')(y.invert(yval));
+                }
+            }
+
+            // vertical line
+            crosshair.select('#crsx')
+                .attr('x1', xval)
+                .attr('y1', margin.top)
+                .attr('x2', xval)
+                .attr('y2', lowerBottom);
+
+            // horizontal line
+            crosshair.select('#crsy')
+                .attr('x1', plotLeft)
+                .attr('y1', yval)
+                .attr('x2', plotRight)
+                .attr('y2', yval);
+
+            label.text(linelabel)
+                .attr('fill', '#9f9f9f')
+                .attr('x', xval)
+                .attr('y', yval)
+                .attr('dx', sx * 8)
+                .attr('dy', sy * 6)
+                .style('font-size', '1.1rem')
+                .style('text-anchor', sx > 0 ? 'start' : 'end');
+
+            lg.text(maintxt);
+
+            if (macd || macdh) {
+                macdlg.text(macdtxt);
+            }
+
+            if (roc) roclg.text('ROC: ' + pointerFormat(yVonx.Roc));
+            if (rsi) rsilg.text('RSI: ' + pointerFormat(yVonx.Rsi));
+    }
+    hidePointer();
+    this.bindChartPointer(svg, paintPointer, hidePointer);
+
+    // draw trendlines
+    svg.append('g').attr('class', 'trend-viewport')
+        .attr('clip-path', `url(#${this.priceClipId})`).append('g')
+        .attr('class', 'trendlines');
+    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
+    this.bindTrendLines(svg, ddata, x, y,
+        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding }, currency, interval);
+    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
+        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding });
+
+    // Update only geometry during gestures; indicator values remain calculated
+    // from the complete history, so zoom does not restart their warm-up periods.
+    for (const panel of panels) {
+        const clipId = this.priceClipId + '-' + panel.key;
+        svg.select('defs').append('clipPath').attr('id', clipId)
+            .append('rect').attr('x', plotLeft).attr('y', panel.top)
+            .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top);
+        svg.selectAll(panel.key === 'macd' ? '.zoom-macd, .zoom-histogram' : '.zoom-' + panel.key)
+            .attr('clip-path', `url(#${clipId})`);
+    }
+    const extent = [[plotLeft, margin.top], [plotRight, height - padding]];
     const maxZoom = Math.max(1, Math.min(100, (datalength - 1) / 9));
     const constrain = transform => {
         const k = Math.max(1, Math.min(maxZoom, transform.k));
         const tx = Math.max(plotRight * (1 - k), Math.min(plotLeft * (1 - k), transform.x));
         return d3.zoomIdentity.translate(tx, Number.isFinite(transform.y) ? transform.y : 0).scale(k);
     };
-    this.zoomTransform = constrain(this.zoomTransform);
-    x.range(baseRange.map(pixel => this.zoomTransform.applyX(pixel)));
-    // Preserve gap-free trading-day spacing and exact observation inversion.
-    x.invert = pixel => {
-        const range = x.range();
-        const index = datalength < 2 ? 0 : Math.round((pixel - range[0]) / (range[1] - range[0]) * (datalength - 1));
-        return ddata[Math.max(0, Math.min(datalength - 1, index))];
-    };
-    const visibleTicks = () => {
-        const visible = Array.from(ddata).filter(date => x(date) >= plotLeft - 0.5 && x(date) <= plotRight + 0.5);
-        const step = Math.max(1, Math.ceil(visible.length / Math.max(2, Math.floor((plotRight - plotLeft) / 140))));
-        return visible.filter((_date, i) => i % step === 0);
-    };
-    const referenceDomain = this.priceBounds(vdata, baseRange, [plotLeft, plotRight]);
-    const autoDomain = () => chart.priceBounds(vdata, x.range(), [plotLeft, plotRight]);
-    const y = d3.scaleLinear().range([priceBottom, priceTop]);
-    const syncPriceDomain = () => y.domain(chart.priceViewport.mode === 'manual'
-        ? chart.priceViewport.domain : autoDomain());
-    syncPriceDomain();
-    this.plotGeometry = { x: baseRange.slice(), y: y.range().slice() };
-    // Also useful to consumers inspecting the current view without changing data.
-    this.plotScales = { x, y };
-    this.panelGeometry = [{ key: 'price', top: priceTop, bottom: priceBottom }, ...layout.panels];
-
-    const defs = svg.append('defs');
-    function clip(id, top, bottom) {
-        defs.append('clipPath').attr('id', id).attr('clipPathUnits', 'userSpaceOnUse')
-            .append('rect').attr('x', plotLeft).attr('y', top)
-            .attr('width', plotRight - plotLeft).attr('height', bottom - top);
-    }
-    clip(this.priceClipId, priceTop, priceBottom);
-    const priceAxis = svg.append('g').attr('class', 'price-axis').attr('transform', `translate(${width},0)`);
-    const dateAxis = svg.append('g').attr('class', 'date-axis').attr('transform', `translate(0,${layout.dateY})`);
-    const xrx = (_value, i) => x(ddata[i]);
-    const line = scale => d3.line().defined(Number.isFinite).x(xrx).y(scale);
-    const bandArea = d3.area().defined(band => Number.isFinite(band.low) && Number.isFinite(band.high))
-        .x(xrx).y0(band => y(band.low)).y1(band => y(band.high));
-    const bandLayer = svg.append('g').attr('class', 'abbc').attr('clip-path', `url(#${this.priceClipId})`);
-    if (enabled.bband) bandLayer.append('path').datum(BandData);
-    const priceLines = svg.append('g').attr('class', 'dline')
-        .attr('fill', 'none').attr('clip-path', `url(#${this.priceClipId})`)
-        .attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round').attr('stroke-width', 1)
-        .selectAll('path').data(mainEntries).join('path').attr('stroke', entry => entry.color);
-
-    function numericDomain(arrays) {
-        const numbers = arrays.flatMap(data => Array.from(data || [])).filter(Number.isFinite);
-        const low = Math.min(0, d3.min(numbers) ?? 0), high = Math.max(0, d3.max(numbers) ?? 0);
-        const room = Math.max((high - low) * 0.06, 0.01);
-        return [low - room, high + room];
-    }
-    const panels = layout.panels.map(panel => {
-        const scale = d3.scaleLinear().range([panel.bottom, panel.top]);
-        const entries = [];
-        if (panel.key === 'macd') {
-            if (enabled.macd) entries.push(
-                { key: 'MacdLine', label: 'MACD', data: MacdLine[0], color: colors.macd },
-                { key: 'MacdSignal', label: 'Signal', data: MacdSignal[0], color: colors.signal });
-            if (enabled.macdh) entries.push({ key: 'MacdHist', label: 'Hist', data: MacdHist[0], color: colors.histogram });
-            scale.domain(numericDomain(entries.map(entry => entry.data))).nice(3);
-        } else if (panel.key === 'rsi') {
-            entries.push({ key: 'Rsi', label: 'RSI', data: Rsi, color: colors.rsi });
-            scale.domain([0, 100]);
-        } else {
-            entries.push({ key: 'Roc', label: 'ROC', data: Roc, color: colors.roc, percent: true });
-            scale.domain(numericDomain([Roc])).nice(3);
-        }
-        const axis = d3.axisRight(scale).tickSizeOuter(0);
-        if (panel.key === 'rsi') axis.tickValues([0, 30, 50, 70, 100]).tickFormat(d3.format('.0f'));
-        else axis.ticks(3).tickFormat(value => formatFxNumber(value) + (panel.key === 'roc' ? '%' : ''));
-        svg.append('g').attr('class', panel.key + '-axis').attr('transform', `translate(${width},0)`).call(axis);
-        const clipId = chart.priceClipId + '-' + panel.key;
-        clip(clipId, panel.top, panel.bottom);
-        const layer = svg.append('g').attr('class', 'zoom-' + panel.key).attr('clip-path', `url(#${clipId})`);
-        const references = panel.key === 'rsi' ? [30, 70] : [0];
-        layer.selectAll('line.reference').data(references).join('line').attr('class', 'reference')
-            .attr('x1', plotLeft).attr('x2', plotRight).attr('y1', scale).attr('y2', scale)
-            .attr('stroke', panel.key === 'roc' ? colors.roc : '#808080').attr('stroke-width', 0.5);
-        const paths = layer.selectAll('path').data(entries.filter(entry => entry.key !== 'MacdHist')).join('path')
-            .attr('fill', 'none').attr('stroke', entry => entry.color).attr('stroke-width', 1);
-        const bars = layer.append('g').attr('class', 'zoom-histogram').selectAll('rect')
-            .data(panel.key === 'macd' && enabled.macdh ? MacdHist[0] : []).join('rect')
-            .attr('class', 'macdhc').attr('fill', value => value > 0 ? '#708070' : '#907070')
-            .attr('y', value => Number.isFinite(value) ? Math.min(scale(value), scale(0)) : scale(0))
-            .attr('height', value => Number.isFinite(value) ? Math.abs(scale(value) - scale(0)) : 0);
-        const texts = svg.append('g').attr('class', panel.key + 'legend').attr('pointer-events', 'none')
-            .attr('transform', `translate(${padding},${panel.legendY})`)
-            .selectAll('text').data(entries).join('text').attr('fill', entry => entry.color);
-        chart.plotScales[panel.key] = scale;
-        return { ...panel, scale, entries, paths, bars, texts };
-    });
-    const bounds = { left: plotLeft, right: plotRight, top: priceTop, bottom: priceBottom };
-    for (const panel of this.panelGeometry) {
-        svg.append('rect').attr('class', panel.key === 'price' ? 'grid' : panel.key + 'grid')
-            .attr('data-panel', panel.key).attr('fill', 'transparent').attr('pointer-events', 'all')
-            .style('cursor', 'crosshair').attr('x', plotLeft).attr('y', panel.top)
-            .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top);
-    }
-    const crosshair = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none');
-    const vertical = crosshair.append('line').attr('id', 'crsx').attr('stroke', '#cdcdcd').attr('stroke-width', 0.5);
-    const horizontal = crosshair.append('line').attr('id', 'crsy').attr('stroke', '#cdcdcd').attr('stroke-width', 0.5);
-    const pointerLabel = crosshair.append('text').attr('fill', '#9f9f9f');
-    function updateLegends(index = 0) {
-        legendTexts.text(entry => mainText(entry, index));
-        for (const panel of panels) {
-            let offset = 0;
-            panel.texts.text(entry => `${entry.label}: ${formatFxNumber(entry.data[index])}${entry.percent && Number.isFinite(entry.data[index]) ? '%' : ''}`)
-                .each(function () { d3.select(this).attr('x', offset); offset += this.getComputedTextLength() + 18; });
-        }
-    }
-    function hidePointer() {
-        chart.state.pointerIndex = null;
-        crosshair.style('display', 'none');
-        updateLegends();
-    }
-    const pointerSeries = Object.fromEntries([...mainEntries, ...panels.flatMap(panel => panel.entries)]
-        .map(entry => [entry.key, entry.data]));
-    function paintPointer(event) {
-        const [rawX, py] = d3.pointer(event, svg.node());
-        const panel = chart.panelGeometry.find(item => py >= item.top && py <= item.bottom);
-        if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
-        const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
-        if (!snapshot) { hidePointer(); return; }
-        chart.state.pointerIndex = snapshot.index;
-        crosshair.style('display', null);
-        vertical.attr('x1', snapshot.x).attr('x2', snapshot.x).attr('y1', priceTop).attr('y2', layout.bottom);
-        horizontal.attr('x1', plotLeft).attr('x2', plotRight).attr('y1', py).attr('y2', py);
-        const scale = panel.key === 'price' ? y : chart.plotScales[panel.key];
-        const onLeft = rawX < width / 2;
-        pointerLabel.text(formatFxNumber(scale.invert(py)) + (panel.key === 'roc' ? '%' : ''))
-            .attr('x', snapshot.x).attr('y', py).attr('dx', onLeft ? 8 : -8)
-            .attr('dy', py < panel.top + 20 ? 16 : -8).attr('text-anchor', onLeft ? 'start' : 'end');
-        updateLegends(snapshot.index);
-    }
-    this.bindChartPointer(svg, paintPointer, hidePointer);
-    svg.append('g').attr('class', 'trend-viewport').attr('clip-path', `url(#${this.priceClipId})`)
-        .append('g').attr('class', 'trendlines');
-    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
-    this.bindTrendLines(svg, ddata, x, y, bounds, currency, interval);
-    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y, bounds);
-
-    const axisHit = svg.append('rect').attr('class', 'price-axis-hit')
-        .attr('x', width - 6).attr('y', priceTop).attr('width', marginRight + 6).attr('height', priceHeight)
-        .attr('fill', 'transparent').attr('pointer-events', 'all').attr('tabindex', 0).attr('role', 'group')
-        .attr('aria-label', 'Shkalla e çmimit: tërhiq për zmadhim vertikal; shigjetat për zhvendosje; Home ose dyklik për automatik.')
-        .style('cursor', 'ns-resize').style('touch-action', 'none');
-    axisHit.append('title').text('Tërhiq: shkalla Y. Rrota: zoom Y. Dyklik / Home: përshtat çmimet.');
-
-    function redraw() {
-        syncPriceDomain();
-        const span = y.domain()[1] - y.domain()[0];
-        // Never request sub-cent ticks when labels have exactly two decimals.
-        const ticks = Math.min(Math.max(2, Math.floor(priceHeight / 50)), Math.max(1, Math.floor(span / 0.01)));
-        priceAxis.call(d3.axisRight(y).ticks(ticks).tickFormat(value => formatFxNumber(value)).tickSizeOuter(0));
-        const tickDate = d3.timeFormat(datalength / chart.zoomTransform.k < 50 ? '%d %b %Y' : '%b %Y');
-        dateAxis.call(d3.axisBottom(x).tickValues(visibleTicks()).tickFormat(tickDate).tickSizeOuter(0))
-            .attr('text-anchor', 'start').select('.domain').attr('d', `M${plotLeft},0.5H${plotRight}`);
-        priceLines.attr('d', entry => line(y)(entry.data));
-        bandLayer.selectAll('path').attr('d', bandArea);
-        const barWidth = Math.max(0.5, Math.min(12, (datalength > 1 ? Math.abs(x.range()[1] - x.range()[0]) / (datalength - 1) : 2) * 0.65));
-        for (const panel of panels) {
-            panel.paths.attr('d', entry => line(panel.scale)(entry.data));
-            panel.bars.attr('x', (_value, i) => x(ddata[i]) - barWidth / 2).attr('width', barWidth);
-        }
-        axisHit.attr('data-y-mode', chart.priceViewport.mode);
-        chart.updateTrendLines?.();
-        updateInfoMarkers();
-        hidePointer();
-    }
-    function setManual(domain) {
-        if (!domain?.every(Number.isFinite) || domain[1] <= domain[0]) return;
-        chart.priceViewport = { mode: 'manual', domain: domain.slice() };
-        redraw();
-    }
-    this.resetPriceView = () => {
-        chart.priceViewport = { mode: 'auto', domain: null };
-        redraw();
-    };
-
-    // The axis captures only its own gesture. It never pans the date axis.
-    let axisGesture = null, lastTap = -Infinity;
-    function finishAxis(cancel = false) {
-        const gesture = axisGesture;
-        axisGesture = null;
-        chart.axisDragging = false;
-        if (!gesture) return;
-        if (gesture.node.hasPointerCapture?.(gesture.id)) gesture.node.releasePointerCapture(gesture.id);
-        if (cancel) { chart.priceViewport = gesture.previous; redraw(); }
-    }
-    axisHit.on('pointerdown.priceaxis', function (event) {
-        event.stopPropagation();
-        if (event.button !== 0 || chart.state.loading || chart.drawingTrend || chart.trendEdit || axisGesture) return;
-        event.preventDefault(); hidePointer();
-        const py = d3.pointer(event, svg.node())[1];
-        axisGesture = { id: event.pointerId, node: this, py, domain: y.domain(), previous: {
-            mode: chart.priceViewport.mode, domain: chart.priceViewport.domain?.slice() || null }, moved: false };
-        chart.axisDragging = true;
-        this.setPointerCapture?.(event.pointerId);
-        this.focus?.({ preventScroll: true });
-    }).on('pointermove.priceaxis', event => {
-        if (!axisGesture || event.pointerId !== axisGesture.id) return;
-        event.preventDefault(); event.stopPropagation();
-        const delta = d3.pointer(event, svg.node())[1] - axisGesture.py;
-        if (Math.abs(delta) < 2 && !axisGesture.moved) return;
-        axisGesture.moved = true;
-        const factor = Math.exp(Math.max(-12, Math.min(12, delta * 0.01)));
-        setManual(chart.stretchPriceDomain(axisGesture.domain, factor, undefined, referenceDomain));
-    }).on('pointerup.priceaxis', event => {
-        if (!axisGesture || event.pointerId !== axisGesture.id) return;
-        event.stopPropagation();
-        const tap = event.pointerType === 'touch' && !axisGesture.moved;
-        finishAxis();
-        if (tap && event.timeStamp - lastTap < 350) { chart.resetPriceView(); lastTap = -Infinity; }
-        else lastTap = tap ? event.timeStamp : -Infinity;
-    }).on('pointercancel.priceaxis lostpointercapture.priceaxis', event => {
-        if (event.pointerId === axisGesture?.id) finishAxis(true);
-    }).on('mousedown.priceaxis touchstart.priceaxis click.priceaxis contextmenu.priceaxis', event => {
-        event.stopPropagation();
-        if (event.type === 'contextmenu') event.preventDefault();
-    }).on('dblclick.priceaxis', event => {
-        event.preventDefault(); event.stopPropagation(); chart.resetPriceView();
-    }).on('wheel.priceaxis', event => {
-        event.preventDefault(); event.stopPropagation();
-        if (chart.state.loading || chart.drawingTrend || chart.trendEdit || axisGesture) return;
-        const py = Math.max(priceTop, Math.min(priceBottom, d3.pointer(event, svg.node())[1]));
-        const factor = Math.exp(Math.max(-200, Math.min(200, event.deltaY)) * 0.002);
-        setManual(chart.stretchPriceDomain(y.domain(), factor, y.invert(py), referenceDomain));
-    }, { passive: false }).on('keydown.priceaxis', event => {
-        if (!['Home', 'Enter', '0', 'ArrowUp', 'ArrowDown', '+', '=', '-', 'Escape'].includes(event.key)) return;
-        event.preventDefault(); event.stopPropagation();
-        if (event.key === 'Escape') { finishAxis(true); return; }
-        if (axisGesture || chart.state.loading || chart.drawingTrend || chart.trendEdit) return;
-        if (['Home', 'Enter', '0'].includes(event.key)) chart.resetPriceView();
-        else if (event.key === 'ArrowUp' || event.key === 'ArrowDown')
-            setManual(chart.shiftPriceDomain(y.domain(), (event.key === 'ArrowDown' ? 1 : -1) * priceHeight * 0.05, priceHeight));
-        else setManual(chart.stretchPriceDomain(y.domain(), event.key === '-' ? 1.2 : 1 / 1.2, undefined, referenceDomain));
-    });
-    this.axisCleanup = () => { finishAxis(true); axisHit.on('.priceaxis', null); chart.axisCleanup = null; };
-
-    // X stays synchronized across panels. Only drags beginning inside the price
-    // panel can enter manual Y mode. A wheel zoom never changes Y mode.
-    function gesturePoint(event) {
+    // Limit the translation to useful space, including any clipped enabled overlays.
+    const plotted = [vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand]
+        .filter(data => data && typeof data.length === 'number')
+        .flatMap(data => Array.from(data)).filter(Number.isFinite);
+    const minPan = Math.min(-0.25, chart.pricePan,
+        (height - padding * 2 - baseY(d3.min(plotted))) / priceHeight);
+    const maxPan = Math.max(0.25, chart.pricePan,
+        (margin.top + padding - baseY(d3.max(plotted))) / priceHeight);
+    const gesturePoint = event => {
         if (!event) return null;
         const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
         return points.length ? [d3.mean(points, point => point[0]), d3.mean(points, point => point[1])] : null;
-    }
-    let dragGesture = null;
+    };
+    let panGesture = null;
     const updateZoom = event => {
         const transform = constrain(event.transform);
         chart.zoomTransform = d3.zoomIdentity.translate(transform.x, 0).scale(transform.k);
         x.range(baseRange.map(pixel => transform.applyX(pixel)));
-        if (dragGesture && ['mousemove', 'touchmove'].includes(event.sourceEvent?.type)) {
-            const point = gesturePoint(event.sourceEvent);
+        const source = event.sourceEvent;
+        if (panGesture && (source?.type === 'mousemove' || source?.type === 'touchmove')) {
+            const count = source.touches?.length || 1, point = gesturePoint(source);
             if (point) {
-                const count = event.sourceEvent.touches?.length || 1;
-                if (count !== dragGesture.count) {
-                    dragGesture.py = point[1]; dragGesture.domain = y.domain(); dragGesture.count = count;
+                if (count !== panGesture.count) {
+                    panGesture.py = point[1]; panGesture.offset = chart.pricePan; panGesture.count = count;
                 }
-                let delta = point[1] - dragGesture.py;
-                if (!dragGesture.active && Math.abs(delta) >= 3) {
-                    dragGesture.active = true;
-                    // Freeze the current view at the first deliberate vertical movement.
-                    dragGesture.domain = y.domain();
+                if (!source.touches || count >= 2) {
+                    const delta = point[1] - panGesture.py;
+                    if (Math.abs(delta) >= 3 || panGesture.active) {
+                        panGesture.active = true;
+                        chart.pricePan = Math.max(minPan, Math.min(maxPan, panGesture.offset + delta / priceHeight));
+                    }
                 }
-                if (dragGesture.active) chart.priceViewport = { mode: 'manual',
-                    domain: chart.shiftPriceDomain(dragGesture.domain, delta, priceHeight) };
             }
         }
-        redraw();
+        applyPricePan();
+        svg.select('.price-axis').call(yAxis);
+        svg.select('.dline').selectAll('path').attr('d', line);
+        svg.select('.abbc').selectAll('path').attr('d', d3.area().x(xrx)
+            .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low)));
+        svg.select('.zoom-macd').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yMacd));
+        svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRoc));
+        svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRsi));
+        svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx);
+        svg.select('.date-axis').call(xAxis).select('.domain')
+            .attr('d', `M${plotLeft},0.5H${plotRight}`);
+        chart.updateTrendLines();
+        updateInfoMarkers();
+        hidePointer();
     };
-    this.zoomBehavior = d3.zoom().extent([[plotLeft, priceTop], [plotRight, priceBottom]])
-        .scaleExtent([1, maxZoom]).constrain(constrain)
-        .filter(event => !chart.drawingTrend && !chart.trendEdit && !chart.axisDragging && !event.altKey &&
+    this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
+        .constrain(constrain)
+        .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
             (!event.button || event.type === 'wheel') &&
-            !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker, .price-axis-hit') &&
-            (event.type === 'touchstart' ? event.touches.length >= 2 : (() => {
-                const point = d3.pointer(event, svg.node());
-                return point[0] >= plotLeft && point[0] <= plotRight &&
-                    chart.panelGeometry.some(panel => point[1] >= panel.top && point[1] <= panel.bottom);
-            })()))
+            !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
+            (event.type !== 'touchstart' || event.touches.length >= 2) && (() => {
+                const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
+                return points.every(([px, py]) => px >= plotLeft && px <= plotRight &&
+                    chart.panelGeometry.some(panel => py >= panel.top && py <= panel.bottom));
+            })())
         .on('start', event => {
             chart.zooming = true; hidePointer();
             const point = gesturePoint(event.sourceEvent);
-            dragGesture = point && ['mousedown', 'touchstart'].includes(event.sourceEvent?.type) &&
-                point[1] >= priceTop && point[1] <= priceBottom
-                ? { py: point[1], domain: y.domain(), count: event.sourceEvent.touches?.length || 1, active: false } : null;
+            panGesture = point && ['mousedown', 'touchstart'].includes(event.sourceEvent?.type) &&
+                point[1] >= margin.top && point[1] <= height - padding
+                ? { py: point[1], offset: chart.pricePan, count: event.sourceEvent.touches?.length || 1, active: false } : null;
         })
         .on('zoom', updateZoom)
-        .on('end', () => { chart.zooming = false; dragGesture = null; });
-    svg.style('touch-action', 'none').call(this.zoomBehavior).on('dblclick.zoom', null)
+        .on('end', () => { chart.zooming = false; panGesture = null; });
+    svg.style('touch-action', 'none').call(this.zoomBehavior)
+        .on('dblclick.zoom', null)
         .on('dblclick.reset', event => {
-            if (chart.drawingTrend || chart.trendEdit || chart.axisDragging) return;
+            if (chart.drawingTrend || chart.trendEdit) return;
             event.preventDefault();
-            chart.priceViewport = { mode: 'auto', domain: null };
+            chart.pricePan = 0;
             svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
         });
-    svg.call(this.zoomBehavior.transform, chart.zoomTransform);
+    svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
+
 }
 
 // round functions
