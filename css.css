@@ -182,30 +182,6 @@ article svg {
 	user-select: none;
 }
 
-/* gesture hint (Ctrl + wheel, two fingers) */
-.chart-hint {
-	position: absolute;
-	inset: 0;
-	z-index: 2;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	text-align: center;
-	white-space: pre-line;
-	padding: 1em;
-	border-radius: .5em;
-	background: rgba(0, 0, 0, .55);
-	color: #fff;
-	font-size: 1.5rem;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 200ms ease-out;
-}
-
-.chart-hint.show {
-	opacity: 1;
-}
-
 footer {
 	margin: 5em 0 2em;
 	font-size: x-small;

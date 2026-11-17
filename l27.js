@@ -761,21 +761,6 @@ class HistoricalPriceChart {
     return { index, date: dates[index], x: step ? range[0] + index * step : (range[0] + range[1]) / 2, values };
   }
 
-  // Overlay message in the style of Google Maps' cooperative gestures.
-  showHint(text) {
-    if (this.destroyed) return;
-    if (!this.hintNode) {
-      this.hintNode = document.createElement('div');
-      this.hintNode.className = 'chart-hint';
-      this.hintNode.setAttribute('role', 'status');
-      this.container.appendChild(this.hintNode);
-    }
-    this.hintNode.textContent = text;
-    this.hintNode.classList.add('show');
-    clearTimeout(this.hintTimer);
-    this.hintTimer = setTimeout(() => this.hintNode?.classList.remove('show'), 1600);
-  }
-
   // Mouse / trackpad: the crosshair follows the pointer. Touch: one finger scrolls
   // the page, two fingers move and zoom the chart, and a long press (about 300 ms)
   // starts the crosshair. After the finger lifts the crosshair stays until the next touch.
@@ -821,9 +806,6 @@ class HistoricalPriceChart {
         const dx = event.clientX - touch.x, dy = event.clientY - touch.y;
         if (Math.hypot(dx, dy) > slop) {
           clearTimeout(touch.timer); // moving: this is not a long press
-          // A mostly horizontal drag is something the page cannot do either: explain.
-          if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.5)
-            chart.showHint('Përdorni dy gishta për të lëvizur grafikun.\nShtypni gjatë për të parë vlerat.');
         }
       }
     });
@@ -914,9 +896,7 @@ class HistoricalPriceChart {
     this.infoDialog?.remove();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
-    this.svg.on('.trends', null).on('.hint', null).on('.guard', null);
-    clearTimeout(this.hintTimer);
-    this.hintNode?.remove();
+    this.svg.on('.trends', null).on('.guard', null);
     this.updateTrendLines = null;
     this.trendDraft = null;
     this.drawingTrend = false;
@@ -1687,8 +1667,10 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         const slow = averages.length ? averages[averages.length - 1][0] : null;
         const marks = [
             ...chart.crossings(fast, slow).map(mark => ({ ...mark, value: fast[mark.index], scale: y, panel: 'price' })),
+            // A MACD / signal crossover is where the histogram crosses zero. With the
+            // lines hidden the marker sits on that zero line instead of on a line that is not drawn.
             ...((macd || macdh) && MacdCross ? chart.crossings(MacdCross.line, MacdCross.signal)
-                .map(mark => ({ ...mark, value: MacdCross.line[mark.index], scale: yMacd, panel: 'macd' })) : [])
+                .map(mark => ({ ...mark, value: macd ? MacdCross.line[mark.index] : 0, scale: yMacd, panel: 'macd' })) : [])
         ];
         const triangle = d3.symbol().type(d3.symbolTriangle).size(34)();
         const layer = svg.append('g').attr('class', 'signals').attr('pointer-events', 'none');
@@ -1866,14 +1848,9 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             chart.pricePan = 0;
             svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
         });
-    // Cooperative gestures: a plain wheel scrolls the page (with a hint); two fingers
-    // belong to the chart, and a long-press crosshair must not scroll the page.
-    const modifier = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
-    svg.on('wheel.hint', event => {
-        if (event.ctrlKey || event.metaKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-        chart.showHint(modifier + ' + rrota për të zmadhuar grafikun');
-    }, { passive: true })
-        .on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
+    // Cooperative gestures: a plain wheel scrolls the page; two fingers belong to
+    // the chart, and a long-press crosshair must not scroll the page.
+    svg.on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
         .on('touchmove.guard', event => { if (chart.touchInspect && event.cancelable) event.preventDefault(); }, { passive: false });
     svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
 
