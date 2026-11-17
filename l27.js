@@ -115,6 +115,9 @@ class HistoricalPriceChart {
     this.selectedTrendId = null;
     this.trendEdit = null;
     this.destroyed = false;
+    // The crosshair starts switched on; a saved choice overrides this.
+    const crosshairButton = document.getElementById('crosshair');
+    if (crosshairButton) crosshairButton.checked = true;
     this.restoreState();
     this.bindControls();
     this.observeLayout();
@@ -201,7 +204,9 @@ class HistoricalPriceChart {
       RS: Math.trunc(number('rsi_values',14)), ST: Math.trunc(number('stoch_values',14,2)),
       bband:checked('bband'), macd:checked('macd'),
       macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi'),
-      stoch:checked('stoch'), signals:checked('signals')
+      stoch:checked('stoch'), signals:checked('signals'),
+      // Without the button in the page the crosshair simply stays on.
+      cross: document.getElementById('crosshair') ? checked('crosshair') : true
     });
     this.config = config;
     // Track selections, not data availability: a short history must not erase
@@ -778,6 +783,7 @@ class HistoricalPriceChart {
     this.hideCrosshair = hide;
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
       chart.pointerType = event.pointerType;
+      if (!chart.config.cross) return; // button off: nothing is drawn (already hidden by render())
       if (blocked(event)) { hide(); return; }
       if (!touchLike(event)) {
         if (event.type === 'pointerdown' && event.button !== 0) { hide(); return; }
@@ -1568,7 +1574,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
         MacdLine: macd ? MacdLine[0] : null,
         MacdSignal: macd ? MacdSignal[0] : null,
-        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi
+        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK
     };
     function paintPointer(event) {
             const [rawX, yval] = d3.pointer(event, svg.node());
@@ -1627,18 +1633,34 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 .attr('x2', xval)
                 .attr('y2', lowerBottom);
 
+            // Like the vertical line snaps to the date, the horizontal line snaps to the
+            // value of the panel's main series at that date. Where the series has no
+            // value (an indicator still warming up) it keeps the pointer's own height.
+            const oscillator = value => d3.format(',')(roundx(value));
+            const target = ({
+                price: [yVonx.vdata, y, formatFxNumber],
+                macd: [macd ? yVonx.MacdLine : yVonx.MacdHist, yMacd, pointerFormat],
+                roc: [yVonx.Roc, yRoc, oscillator],
+                rsi: [yVonx.Rsi, yRsi, oscillator],
+                stoch: [yVonx.StochK, yStoch, oscillator]
+            })[panel];
+            const snapped = Number.isFinite(target?.[0]);
+            const panelBox = chart.panelGeometry.find(item => item.key === panel);
+            const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
+            const valueText = snapped ? target[2](target[0]) : linelabel();
+
             // horizontal line
             crosshair.select('#crsy')
                 .attr('x1', plotLeft)
-                .attr('y1', yval)
+                .attr('y1', lineY)
                 .attr('x2', plotRight)
-                .attr('y2', yval);
+                .attr('y2', lineY);
 
             // The value and the date are shown on the axes for every kind of pointer;
             // nothing is drawn next to the cursor or the finger.
             axisY.style('display', null)
-                .attr('transform', 'translate(' + width + ',' + yval + ')')
-                .select('text').text(linelabel());
+                .attr('transform', 'translate(' + width + ',' + lineY + ')')
+                .select('text').text(valueText);
             axisX.style('display', null)
                 .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
                 .select('text').text(axisDate(snapshot.date));
@@ -2029,7 +2051,7 @@ bollingerband(data, N, K) {
 }
 HistoricalPriceChart.storageKey = 'fxchart.v1';
 HistoricalPriceChart.textControls = ['ma_a','ma_b','ma_c','ma_d','bb_N','bb_K','macd_fast','macd_slow','macd_signal','roc_values','rsi_values','stoch_values'];
-HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals'];
+HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals','crosshair'];
 window.HistoricalPriceChart=HistoricalPriceChart;
 const startChart=()=>{
 window.historicalPriceChart?.destroy();
