@@ -1162,6 +1162,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .y(y);
 
     const svg = this.svg
+        // With the crosshair on, its lines mark the position: the mouse cursor is hidden.
+        .classed('crosshair-on', Boolean(this.config.cross))
         .attr('preserveAspectRatio', 'xMinYMin meet')
         .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + (dateY + margin.top));
 
