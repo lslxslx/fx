@@ -1489,7 +1489,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
     // crosshair
     let crssh = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none'),
-        label = crssh.append('text'),
         crosshair = crssh.append('g')
             .attr('stroke-width', 0.5);
 
@@ -1557,7 +1556,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     function hidePointer() {
             chart.state.pointerIndex = null;
             crosshair.style('display', 'none');
-            label.style('display', 'none');
             axisY.style('display', 'none');
             axisX.style('display', 'none');
             lg.text(lglatest);
@@ -1582,9 +1580,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             const xval = snapshot.x, yVonx = snapshot.values;
             crosshair.style('display', null);
 
-            const touchPointer = event.pointerType === 'touch';
-            const sx = xval < width / 2 ? 1 : -1;
-            const sy = yval < height / 2 ? 2 : -1;
             const pointerFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
 
             function maintxt(_d, i) {
@@ -1639,20 +1634,12 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 .attr('x2', plotRight)
                 .attr('y2', yval);
 
-            label.text(linelabel)
-                .attr('fill', '#9f9f9f')
-                .attr('x', xval)
-                .attr('y', yval)
-                .attr('dx', sx * 8)
-                .attr('dy', sy * 6)
-                .style('font-size', '1.1rem')
-                .style('text-anchor', sx > 0 ? 'start' : 'end')
-                .style('display', touchPointer ? 'none' : null);
-
-            axisY.style('display', touchPointer ? null : 'none')
+            // The value and the date are shown on the axes for every kind of pointer;
+            // nothing is drawn next to the cursor or the finger.
+            axisY.style('display', null)
                 .attr('transform', 'translate(' + width + ',' + yval + ')')
                 .select('text').text(linelabel());
-            axisX.style('display', touchPointer ? null : 'none')
+            axisX.style('display', null)
                 .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
                 .select('text').text(axisDate(snapshot.date));
 
