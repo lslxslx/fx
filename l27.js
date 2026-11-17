@@ -1162,6 +1162,10 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .y(y);
 
     const svg = this.svg
+        // Cursor: a dot while the crosshair is on, the default arrow when it is off,
+        // and a grabbing hand while the chart is dragged (see css.css).
+        .classed('crosshair-on', Boolean(this.config.cross))
+        .classed('panning', false)
         .attr('preserveAspectRatio', 'xMinYMin meet')
         .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + (dateY + margin.top));
 
@@ -1876,13 +1880,14 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             })())
         .on('start', event => {
             chart.zooming = true; hidePointer();
+            if (event.sourceEvent?.type === 'mousedown') svg.classed('panning', true);
             const point = gesturePoint(event.sourceEvent);
             panGesture = point && ['mousedown', 'touchstart'].includes(event.sourceEvent?.type) &&
                 point[1] >= margin.top && point[1] <= height - padding
                 ? { py: point[1], offset: chart.pricePan, count: event.sourceEvent.touches?.length || 1, active: false } : null;
         })
         .on('zoom', updateZoom)
-        .on('end', () => { chart.zooming = false; panGesture = null; });
+        .on('end', () => { chart.zooming = false; panGesture = null; svg.classed('panning', false); });
     svg.style('touch-action', 'pan-y').call(this.zoomBehavior)
         .on('dblclick.zoom', null)
         .on('dblclick.reset', event => {
