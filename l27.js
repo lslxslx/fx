@@ -1562,7 +1562,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 switch (panel) {
                     case 'roc': return roundx(yRoc.invert(yval));
                     case 'rsi': return roundx(yRsi.invert(yval));
-                    case 'stoch': return roundx(yStoch.invert(yval));
+                    case 'stoch': return roundx(Math.max(0, Math.min(100, yStoch.invert(yval))));
                     case 'macd':
                         return fd(roundx(yMacd.invert(yval)));
                         break;
@@ -1664,8 +1664,10 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
     for (const panel of panels) {
         const clipId = this.priceClipId + '-' + panel.key;
         svg.select('defs').append('clipPath').attr('id', clipId)
-            .append('rect').attr('x', plotLeft).attr('y', panel.top)
-            .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top);
+            // 2px of room on each side: a line resting exactly on a limit (closing-price
+            // Stochastic often sits on 0 or 100) is not cut in half by the clip.
+            .append('rect').attr('x', plotLeft).attr('y', panel.top - 2)
+            .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top + 4);
         svg.selectAll(panel.key === 'macd' ? '.zoom-macd, .zoom-histogram' : '.zoom-' + panel.key)
             .attr('clip-path', `url(#${clipId})`);
     }
@@ -1755,7 +1757,12 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRoc));
         svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRsi));
         svg.select('.zoom-stoch').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yStoch));
-        svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx)
+        // Bar width follows the spacing between points (never thinner than the
+        // original bins), so zooming in widens the bars instead of leaving lines.
+        const histStep = datalength > 1 ? Math.abs(x(ddata[1]) - x(ddata[0])) : 0;
+        const histWidth = Math.max(datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5), Math.min(histStep * 0.7, 14));
+        svg.select('.zoom-histogram').selectAll('rect').attr('transform', null)
+            .attr('width', histWidth).attr('x', (d, i) => xrx(d, i) - histWidth / 2)
             .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
             .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
         svg.select('.macd-axis').call(yMAxis);
