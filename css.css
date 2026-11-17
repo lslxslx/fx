@@ -519,11 +519,6 @@ svg text {
 	fill: var(--level-color);
 }
 
-.signals-note {
-	fill: var(--placeholder-color);
-	font-style: italic;
-}
-
 
 /* bollinger band area */
 

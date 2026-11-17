@@ -1023,10 +1023,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         tformat = datalength < limdata ? format.daily : format.monthly;
 
     // Price chart, bollinger and ema
+    // Tick labels need more decimals once zoom narrows the price range.
+    const priceDecimals = () => {
+        const [low, high] = y.domain(), span = Math.abs(high - low);
+        return span > 0 ? Math.min(4, Math.max(2, Math.ceil(-Math.log10(span / 8)))) : 2;
+    };
     let yAxis = g => g
         .attr('transform', 'translate(' + width + ', 0)')
         .call(d3.axisRight(y)
-            .tickFormat(d3.format(",.2f"))
+            .tickFormat(d3.format(',.' + priceDecimals() + 'f'))
             .tickSizeOuter(0));
 
     let xAxis = g => g
@@ -1211,18 +1216,20 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .attr('d', line);
 
     // horizontal line function
+    const hrLines = [];
     function hr(y, yscale, color, swd) {
         let dateRange = [d3.max(ddata), d3.min(ddata)];
-        svg.append('g')
+        const xs = dateRange.map(date => x(date)); // full plot width, independent of zoom
+        const path = svg.append('g')
             .attr('stroke-width', 0.3)
             .selectAll('path')
             .data([[y, y]])
             .join('path')
             .attr('stroke', color)
-            .attr('stroke-width', swd)
-            .attr('d', d3.line()
-                .x((_d, i) => x(dateRange[i]))
-                .y(yscale));
+            .attr('stroke-width', swd);
+        const place = () => path.attr('d', d3.line().x((_d, i) => xs[i]).y(() => yscale(y)));
+        place();
+        hrLines.push(place);
     }
 
     // price chart legend
@@ -1634,14 +1641,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             this.removeAttribute('clip-path');
             this.parentNode.insertBefore(wrapper, this); wrapper.appendChild(this);
         });
-        // Too many markers in one panel only hide the lines they point at, so
-        // each panel hides its own markers above a density limit and shows a
-        // short note instead. Zooming in brings them back.
-        const notePanels = ['price', ...(panelByKey.macd ? ['macd'] : [])];
-        const notes = layer.selectAll('text').data(notePanels).join('text')
-            .attr('class', 'signals-note').attr('text-anchor', 'end').attr('x', plotRight - 6)
-            .attr('y', panel => (panel === 'price' ? margin.top : panelByKey.macd.top) + 14)
-            .text('Sinjalet fshihen: zmadhoni');
+        // Markers in a crowded panel hide on their own; zooming in brings them back.
         updateSignals = () => {
             const limit = Math.max(10, Math.floor((plotRight - plotLeft) / 14));
             const visible = { price: 0, macd: 0 };
@@ -1652,7 +1652,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             const crowded = panel => visible[panel] > limit;
             nodes.attr('display', mark => crowded(mark.panel) ? 'none' : null)
                 .attr('transform', mark => 'translate(' + mark.px + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
-            notes.attr('display', panel => crowded(panel) ? null : 'none');
         };
     }
     const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
@@ -1678,13 +1677,48 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         return d3.zoomIdentity.translate(tx, Number.isFinite(transform.y) ? transform.y : 0).scale(k);
     };
     // Limit the translation to useful space, including any clipped enabled overlays.
-    const plotted = [vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand]
-        .filter(data => data && typeof data.length === 'number')
-        .flatMap(data => Array.from(data)).filter(Number.isFinite);
-    const minPan = Math.min(-0.25, chart.pricePan,
-        (height - padding * 2 - baseY(d3.min(plotted))) / priceHeight);
-    const maxPan = Math.max(0.25, chart.pricePan,
-        (margin.top + padding - baseY(d3.max(plotted))) / priceHeight);
+    let minPan = -0.25, maxPan = 0.25;
+    // Y scales follow the visible part of the data, so zooming in on a quiet
+    // stretch is not drawn as a flat line on a scale made for the whole history.
+    const visibleIndices = () => {
+        const range = x.range(), last = datalength - 1;
+        if (last < 1) return [0, Math.max(0, last)];
+        const step = (range[1] - range[0]) / last;
+        const a = (plotLeft - range[0]) / step, b = (plotRight - range[0]) / step;
+        // One extra point on each side lets lines run to the plot edge.
+        const low = Math.max(0, Math.ceil(Math.min(a, b) - 1e-9) - 1);
+        const high = Math.min(last, Math.floor(Math.max(a, b) + 1e-9) + 1);
+        return low <= high ? [low, high] : [0, last];
+    };
+    const extentOf = (seriesList, low, high, include) => {
+        let min = include ?? Infinity, max = include ?? -Infinity;
+        for (const series of seriesList) {
+            if (!series) continue;
+            for (let i = low, end = Math.min(high, series.length - 1); i <= end; i++) {
+                const value = series[i];
+                if (Number.isFinite(value)) { if (value < min) min = value; if (value > max) max = value; }
+            }
+        }
+        return [min, max];
+    };
+    const fitDomain = (scale, [min, max], pad = 0) => {
+        if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+        if (!(max > min)) { const gap = Math.max(Math.abs(min) * 0.01, 0.01); min -= gap; max += gap; }
+        scale.domain([min - (max - min) * pad, max + (max - min) * pad]);
+    };
+    const autoscale = () => {
+        const [low, high] = visibleIndices();
+        // Price only: overlays toggled on or off must not move the price scale.
+        fitDomain(baseY, extentOf([vdata], low, high), 0.08);
+        const visiblePlotted = extentOf([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand], low, high);
+        if (Number.isFinite(visiblePlotted[0])) {
+            minPan = Math.min(-0.25, chart.pricePan, (height - padding * 2 - baseY(visiblePlotted[0])) / priceHeight);
+            maxPan = Math.max(0.25, chart.pricePan, (margin.top + padding - baseY(visiblePlotted[1])) / priceHeight);
+        }
+        // MACD and ROC both draw a zero line, so zero stays inside their range.
+        if (macd || macdh) fitDomain(yMacd, extentOf([macd ? MacdLine[0] : null, macd ? MacdSignal[0] : null, macdh ? MacdHist[0] : null], low, high, 0), 0.05);
+        if (roc) fitDomain(yRoc, extentOf([Roc], low, high, 0), 0.05);
+    };
     const gesturePoint = event => {
         if (!event) return null;
         const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
@@ -1695,6 +1729,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         const transform = constrain(event.transform);
         chart.zoomTransform = d3.zoomIdentity.translate(transform.x, 0).scale(transform.k);
         x.range(baseRange.map(pixel => transform.applyX(pixel)));
+        autoscale();
         const source = event.sourceEvent;
         if (panGesture && (source?.type === 'mousemove' || source?.type === 'touchmove')) {
             const count = source.touches?.length || 1, point = gesturePoint(source);
@@ -1720,7 +1755,12 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRoc));
         svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRsi));
         svg.select('.zoom-stoch').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yStoch));
-        svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx);
+        svg.select('.zoom-histogram').selectAll('rect').attr('x', xrx)
+            .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+            .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
+        svg.select('.macd-axis').call(yMAxis);
+        svg.select('.roc-axis').call(yRCAxis);
+        hrLines.forEach(place => place());
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
         drawGrid();
