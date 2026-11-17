@@ -1574,7 +1574,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
         MacdLine: macd ? MacdLine[0] : null,
         MacdSignal: macd ? MacdSignal[0] : null,
-        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK
+        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK, StochD
     };
     function paintPointer(event) {
             const [rawX, yval] = d3.pointer(event, svg.node());
@@ -1633,18 +1633,28 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 .attr('x2', xval)
                 .attr('y2', lowerBottom);
 
-            // Like the vertical line snaps to the date, the horizontal line snaps to the
-            // value of the panel's main series at that date. Where the series has no
-            // value (an indicator still warming up) it keeps the pointer's own height.
+            // Like the vertical line snaps to the date, the horizontal line snaps to a
+            // series value at that date. In panels with several lines (MACD line, signal,
+            // histogram; Stochastic %K, %D) it takes the one closest to the pointer.
+            // Where no series has a value (an indicator still warming up) it keeps the
+            // pointer's own height.
             const oscillator = value => d3.format(',')(roundx(value));
-            const target = ({
-                price: [yVonx.vdata, y, formatFxNumber],
-                macd: [macd ? yVonx.MacdLine : yVonx.MacdHist, yMacd, pointerFormat],
-                roc: [yVonx.Roc, yRoc, oscillator],
-                rsi: [yVonx.Rsi, yRsi, oscillator],
-                stoch: [yVonx.StochK, yStoch, oscillator]
-            })[panel];
-            const snapped = Number.isFinite(target?.[0]);
+            const candidates = ({
+                price: [[yVonx.vdata, y, formatFxNumber]],
+                macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
+                       [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
+                       [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
+                roc: [[yVonx.Roc, yRoc, oscillator]],
+                rsi: [[yVonx.Rsi, yRsi, oscillator]],
+                stoch: [[yVonx.StochK, yStoch, oscillator], [yVonx.StochD, yStoch, oscillator]]
+            })[panel] || [];
+            let target = null, distance = Infinity;
+            for (const candidate of candidates) {
+                if (!Number.isFinite(candidate[0])) continue;
+                const gap = Math.abs(candidate[1](candidate[0]) - yval);
+                if (gap < distance) { distance = gap; target = candidate; }
+            }
+            const snapped = target !== null;
             const panelBox = chart.panelGeometry.find(item => item.key === panel);
             const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
             const valueText = snapped ? target[2](target[0]) : linelabel();
