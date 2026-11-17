@@ -1635,12 +1635,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
             // Like the vertical line snaps to the date, the horizontal line snaps to a
             // series value at that date. In panels with several lines (MACD line, signal,
-            // histogram; Stochastic %K, %D) it takes the one closest to the pointer.
+            // histogram; Stochastic %K, %D; price and its overlays) it takes the one
+            // closest to the pointer.
             // Where no series has a value (an indicator still warming up) it keeps the
             // pointer's own height.
             const oscillator = value => d3.format(',')(roundx(value));
             const candidates = ({
-                price: [[yVonx.vdata, y, formatFxNumber]],
+                // Price plus every overlay that is drawn (moving averages, Bollinger bands).
+                price: [yVonx.vdata, yVonx.MA_a, yVonx.MA_b, yVonx.MA_c, yVonx.MA_d,
+                        yVonx.UpperBand, yVonx.LowerBand].map(value => [value, y, formatFxNumber]),
                 macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
                        [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
                        [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
