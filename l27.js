@@ -1493,6 +1493,21 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         crosshair = crssh.append('g')
             .attr('stroke-width', 0.5);
 
+    // Touch: the value goes on the price axis and the date on the date axis,
+    // so nothing is drawn next to (or under) the finger.
+    const axisTag = (width, anchor) => {
+        const tag = crssh.append('g').style('display', 'none');
+        tag.append('rect').attr('height', 18).attr('rx', 2).attr('y', anchor).attr('fill', '#5b6270');
+        tag.append('text').attr('dy', '0.32em').attr('y', anchor + 9).attr('fill', '#fff');
+        return tag;
+    };
+    const axisY = axisTag(0, -9), axisX = axisTag(0, 3);
+    axisY.select('rect').attr('x', 1).attr('width', Math.max(0, margin.right - 2));
+    axisY.select('text').attr('x', 9);
+    axisX.select('rect').attr('x', -40).attr('width', 80);
+    axisX.select('text').attr('text-anchor', 'middle');
+    const axisDate = d3.timeFormat(interval === 'mave' || interval === 'quave' ? '%b %Y' : '%d %b %Y');
+
     // horizontal line
     crosshair.append('line')
         .attr('id', 'crsx')
@@ -1543,6 +1558,8 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             chart.state.pointerIndex = null;
             crosshair.style('display', 'none');
             label.style('display', 'none');
+            axisY.style('display', 'none');
+            axisX.style('display', 'none');
             lg.text(lglatest);
             if (macd || macdh) {
                 macdlg.text(macdlglatest);
@@ -1564,7 +1581,6 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             chart.state.pointerIndex = snapshot.index;
             const xval = snapshot.x, yVonx = snapshot.values;
             crosshair.style('display', null);
-            label.style('display', null);
 
             const touchPointer = event.pointerType === 'touch';
             const sx = xval < width / 2 ? 1 : -1;
@@ -1627,13 +1643,18 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 .attr('fill', '#9f9f9f')
                 .attr('x', xval)
                 .attr('y', yval)
-                .attr('dx', touchPointer ? 0 : sx * 8)
-                // On touch the label sits above the finger (below it near the top edge).
-                .attr('dy', touchPointer ? (yval - margin.top > 56 ? -44 : 52) : sy * 6)
+                .attr('dx', sx * 8)
+                .attr('dy', sy * 6)
                 .style('font-size', '1.1rem')
-                .style('text-anchor', touchPointer
-                    ? (xval < plotLeft + 30 ? 'start' : (xval > plotRight - 30 ? 'end' : 'middle'))
-                    : (sx > 0 ? 'start' : 'end'));
+                .style('text-anchor', sx > 0 ? 'start' : 'end')
+                .style('display', touchPointer ? 'none' : null);
+
+            axisY.style('display', touchPointer ? null : 'none')
+                .attr('transform', 'translate(' + width + ',' + yval + ')')
+                .select('text').text(linelabel());
+            axisX.style('display', touchPointer ? null : 'none')
+                .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
+                .select('text').text(axisDate(snapshot.date));
 
             lg.text(maintxt);
 
