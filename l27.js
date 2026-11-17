@@ -561,6 +561,7 @@ class HistoricalPriceChart {
     };
     this.updateTrendLines = redraw;
     svg.on('contextmenu.trends', event => {
+      if (chart.pointerType === 'touch') { event.preventDefault(); return; }
       if (chart.state.loading || chart.zooming || chart.trendEdit || event.target.closest?.('.info-marker, .trend-handle')) return;
       const [px, py] = d3.pointer(event, svg.node());
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
@@ -760,37 +761,88 @@ class HistoricalPriceChart {
     return { index, date: dates[index], x: step ? range[0] + index * step : (range[0] + range[1]) / 2, values };
   }
 
+  // Overlay message in the style of Google Maps' cooperative gestures.
+  showHint(text) {
+    if (this.destroyed) return;
+    if (!this.hintNode) {
+      this.hintNode = document.createElement('div');
+      this.hintNode.className = 'chart-hint';
+      this.hintNode.setAttribute('role', 'status');
+      this.container.appendChild(this.hintNode);
+    }
+    this.hintNode.textContent = text;
+    this.hintNode.classList.add('show');
+    clearTimeout(this.hintTimer);
+    this.hintTimer = setTimeout(() => this.hintNode?.classList.remove('show'), 1600);
+  }
+
+  // Mouse / trackpad: the crosshair follows the pointer. Touch: one finger scrolls
+  // the page, two fingers move and zoom the chart, and a long press (about 300 ms)
+  // starts the crosshair. After the finger lifts the crosshair stays until the next touch.
   bindChartPointer(svg, paint, hide) {
-    const active = new Set();
-    const node = svg.node();
-    const release = id => {
-      if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id);
+    const chart = this, node = svg.node();
+    const holdMs = 300, slop = 8;
+    let touch = null;
+    const touchLike = event => event.pointerType === 'touch';
+    const release = id => { if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id); };
+    const stopTouch = () => {
+      if (!touch) return;
+      clearTimeout(touch.timer); release(touch.id); touch = null; chart.touchInspect = false;
     };
+    const blocked = event => event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle');
+    this.hideCrosshair = hide;
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
-      if (event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle')) { hide(); return; }
+      chart.pointerType = event.pointerType;
+      if (blocked(event)) { hide(); return; }
+      if (!touchLike(event)) {
+        if (event.type === 'pointerdown' && event.button !== 0) { hide(); return; }
+        if (chart.zooming || chart.drawingTrend || chart.trendEdit || event.buttons) { hide(); return; }
+        paint(event);
+        return;
+      }
       if (event.type === 'pointerdown') {
-        if (event.button !== 0) { hide(); return; }
-        if (event.pointerType !== 'mouse') {
-          active.add(event.pointerId);
-          node.setPointerCapture?.(event.pointerId);
-          // Suppress compatibility mouse drag for pen/touch inspection.
-          event.preventDefault();
+        event.preventDefault(); // no compatibility mouse events
+        hide();
+        if (touch) { stopTouch(); return; } // a second finger belongs to the zoom gesture
+        touch = { id: event.pointerId, x: event.clientX, y: event.clientY, inspecting: false, last: event };
+        touch.timer = setTimeout(() => {
+          const current = touch;
+          if (!current || chart.zooming || chart.drawingTrend || chart.trendEdit) return;
+          current.inspecting = true; chart.touchInspect = true;
+          node.setPointerCapture?.(current.id);
+          navigator.vibrate?.(8);
+          paint(current.last);
+        }, holdMs);
+        return;
+      }
+      if (event.type === 'pointermove' && touch && touch.id === event.pointerId) {
+        touch.last = event;
+        if (touch.inspecting) { if (!chart.zooming) paint(event); return; }
+        const dx = event.clientX - touch.x, dy = event.clientY - touch.y;
+        if (Math.hypot(dx, dy) > slop) {
+          clearTimeout(touch.timer); // moving: this is not a long press
+          // A mostly horizontal drag is something the page cannot do either: explain.
+          if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.5)
+            chart.showHint('Përdorni dy gishta për të lëvizur grafikun.\nShtypni gjatë për të parë vlerat.');
         }
       }
-      if (this.zooming || this.drawingTrend || this.trendEdit || active.size > 1 ||
-          (event.pointerType === 'mouse' && event.buttons)) { hide(); return; }
-      paint(event);
     });
     svg.on('pointerup.inspect pointercancel.inspect lostpointercapture.inspect', event => {
-      active.delete(event.pointerId);
-      release(event.pointerId);
-      if (event.pointerType !== 'mouse' || event.type !== 'pointerup') hide();
+      if (touchLike(event)) {
+        if (touch && touch.id === event.pointerId) {
+          if (event.type === 'pointercancel') { stopTouch(); hide(); } // the browser took over: page scroll
+          else if (event.type === 'pointerup') stopTouch();            // a long-press crosshair stays visible
+        }
+        return;
+      }
+      if (event.type !== 'pointerup') hide();
     });
-    svg.on('pointerleave.inspect', hide);
+    svg.on('pointerleave.inspect', event => { if (!touchLike(event)) hide(); });
     this.pointerCleanup = () => {
       svg.on('.inspect', null);
-      active.forEach(release); active.clear();
+      stopTouch();
       hide();
+      this.hideCrosshair = null;
       this.pointerCleanup = null;
     };
   }
@@ -821,6 +873,9 @@ class HistoricalPriceChart {
       else this.reloadData();
     });
     this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
+    this.listen(document, 'pointerdown', event => {
+      if (!this.container.contains(event.target)) this.hideCrosshair?.();
+    });
     this.listen(window, 'keydown', event => {
       if (event.key !== 'Escape') return;
       if (this.trendEdit) this.finishTrendEdit(false);
@@ -859,7 +914,9 @@ class HistoricalPriceChart {
     this.infoDialog?.remove();
     this.listeners.forEach(remove=>remove()); this.listeners=[];
     this.svg.on('.zoom', null).on('dblclick.reset', null);
-    this.svg.on('.trends', null);
+    this.svg.on('.trends', null).on('.hint', null).on('.guard', null);
+    clearTimeout(this.hintTimer);
+    this.hintNode?.remove();
     this.updateTrendLines = null;
     this.trendDraft = null;
     this.drawingTrend = false;
@@ -1529,6 +1586,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             crosshair.style('display', null);
             label.style('display', null);
 
+            const touchPointer = event.pointerType === 'touch';
             const sx = xval < width / 2 ? 1 : -1;
             const sy = yval < height / 2 ? 2 : -1;
             const pointerFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
@@ -1589,10 +1647,13 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
                 .attr('fill', '#9f9f9f')
                 .attr('x', xval)
                 .attr('y', yval)
-                .attr('dx', sx * 8)
-                .attr('dy', sy * 6)
+                .attr('dx', touchPointer ? 0 : sx * 8)
+                // On touch the label sits above the finger (below it near the top edge).
+                .attr('dy', touchPointer ? (yval - margin.top > 56 ? -44 : 52) : sy * 6)
                 .style('font-size', '1.1rem')
-                .style('text-anchor', sx > 0 ? 'start' : 'end');
+                .style('text-anchor', touchPointer
+                    ? (xval < plotLeft + 30 ? 'start' : (xval > plotRight - 30 ? 'end' : 'middle'))
+                    : (sx > 0 ? 'start' : 'end'));
 
             lg.text(maintxt);
 
@@ -1781,6 +1842,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         .constrain(constrain)
         .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
             (!event.button || event.type === 'wheel') &&
+            (event.type !== 'wheel' || event.ctrlKey || event.metaKey) &&
             !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
             (event.type !== 'touchstart' || event.touches.length >= 2) && (() => {
                 const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
@@ -1796,7 +1858,7 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
         })
         .on('zoom', updateZoom)
         .on('end', () => { chart.zooming = false; panGesture = null; });
-    svg.style('touch-action', 'none').call(this.zoomBehavior)
+    svg.style('touch-action', 'pan-y').call(this.zoomBehavior)
         .on('dblclick.zoom', null)
         .on('dblclick.reset', event => {
             if (chart.drawingTrend || chart.trendEdit) return;
@@ -1804,6 +1866,15 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             chart.pricePan = 0;
             svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
         });
+    // Cooperative gestures: a plain wheel scrolls the page (with a hint); two fingers
+    // belong to the chart, and a long-press crosshair must not scroll the page.
+    const modifier = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
+    svg.on('wheel.hint', event => {
+        if (event.ctrlKey || event.metaKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        chart.showHint(modifier + ' + rrota për të zmadhuar grafikun');
+    }, { passive: true })
+        .on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
+        .on('touchmove.guard', event => { if (chart.touchInspect && event.cancelable) event.preventDefault(); }, { passive: false });
     svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
 
 }
