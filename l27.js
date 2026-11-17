@@ -1634,8 +1634,26 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
             this.removeAttribute('clip-path');
             this.parentNode.insertBefore(wrapper, this); wrapper.appendChild(this);
         });
-        updateSignals = () => nodes.attr('transform', mark =>
-            'translate(' + x(ddata[mark.index]) + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
+        // Too many markers in one panel only hide the lines they point at, so
+        // each panel hides its own markers above a density limit and shows a
+        // short note instead. Zooming in brings them back.
+        const notePanels = ['price', ...(panelByKey.macd ? ['macd'] : [])];
+        const notes = layer.selectAll('text').data(notePanels).join('text')
+            .attr('class', 'signals-note').attr('text-anchor', 'end').attr('x', plotRight - 6)
+            .attr('y', panel => (panel === 'price' ? margin.top : panelByKey.macd.top) + 14)
+            .text('Sinjalet fshihen: zmadhoni');
+        updateSignals = () => {
+            const limit = Math.max(10, Math.floor((plotRight - plotLeft) / 14));
+            const visible = { price: 0, macd: 0 };
+            for (const mark of marks) {
+                mark.px = x(ddata[mark.index]);
+                if (mark.px >= plotLeft && mark.px <= plotRight) visible[mark.panel]++;
+            }
+            const crowded = panel => visible[panel] > limit;
+            nodes.attr('display', mark => crowded(mark.panel) ? 'none' : null)
+                .attr('transform', mark => 'translate(' + mark.px + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
+            notes.attr('display', panel => crowded(panel) ? null : 'none');
+        };
     }
     const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
         .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
