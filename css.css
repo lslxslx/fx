@@ -502,14 +502,8 @@ svg text {
 .grid,
 .macdgrid,
 .rsrcgrid {
-	cursor: default;
-}
-
-/* the crosshair lines mark the position, so no mouse cursor over the chart */
-svg.crosshair-on .grid,
-svg.crosshair-on .macdgrid,
-svg.crosshair-on .rsrcgrid {
-	cursor: none;
+	/* a small dot instead of the cross (white rim: visible in both themes) */
+	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Ccircle cx='4.5' cy='4.5' r='2.5' fill='%2338678f' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E") 4 4, crosshair;
 }
 
 
