@@ -931,7 +931,7 @@ class HistoricalPriceChart {
       tformat = datalength < limdata ? format.daily : format.monthly;
     let x = d3.scalePoint()
       .domain(ddata)
-      .range([width < minwidth ? width + margin.right - padding : width - axisGap, padding]);
+      .range([width - axisGap, padding]);
     const baseRange = x.range().slice();
     this.zoomTransform = this.resizeZoom(baseRange);
     const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
