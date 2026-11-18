@@ -1108,20 +1108,47 @@ parseData(values, currency) {
     return arr;
 }
 
+// ---------------------------------------------------------------------------
+// Drawing. drawChart() builds the layout once and then draws the chart in parts,
+// in this order (the order of the SVG layers): frame and axes, price panel,
+// MACD panel, ROC / RSI / Stochastic panels, crosshair, trend lines and levels,
+// info markers, crossover signals, and finally zoom. Each part returns what the
+// zoom handler needs to update it.
 drawChart(values, currency) {
-let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,ST,bband,macd,macdh,roc,rsi,stoch,signals}=this.config;
-const svgvB=this.container, interval=this.state.interval, chart=this;
-this.drawingTrend = Boolean(this.trendDraft);
-const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
-const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
+    this.drawingTrend = Boolean(this.trendDraft);
+    const ctx = this.chartLayout(values, currency);
+    this.drawFrame(ctx);
+    const price = this.drawPricePanel(ctx);
+    const macd = this.drawMacdPanel(ctx);
+    const oscillators = this.drawOscillatorPanels(ctx);
+    const legends = [price.legend, macd.legend, ...oscillators.legends].filter(Boolean);
+    const hidePointer = this.drawCrosshair(ctx, legends);
+    const { svg, ddata, vdata, x, y, plotLeft, plotRight, margin, height, padding, interval } = ctx;
+    const priceBounds = { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding };
+    // draw trendlines
+    svg.append('g').attr('class', 'trend-viewport')
+        .attr('clip-path', `url(#${this.priceClipId})`).append('g')
+        .attr('class', 'trendlines');
+    svg.select('.trend-viewport').insert('g', '.trendlines').attr('class', 'levels');
+    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
+    this.bindTrendLines(svg, ddata, x, y, priceBounds, currency, interval);
+    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y, priceBounds);
+    const updateSignals = this.drawSignals(ctx);
+    this.setupZoom(ctx, {
+        panels: [price.update, macd.update, oscillators.update],
+        afterAxes: [price.updateOverlay, updateSignals, () => this.updateTrendLines(), updateInfoMarkers],
+        hidePointer
+    });
+}
+
+// Layout, scales and everything the drawing parts share.
+chartLayout(values, currency) {
+    const chart = this, svgvB = this.container, interval = this.state.interval;
+    const config = this.config;
     const series = this.indicatorSeries(values);
+    const { macd, macdh, roc, rsi, stoch } = series.enabled;
     const limdata = 50,
-        macdhbinsl = 1500,
-        macdhbinsm = 900,
         minwidth = 300, // screen
-        maxlgwidth = 1050, // screen legend
-        legendoffsetw = 23,
-        legendoffseth = 1,
         // Keep the original margin for ordinary FX prices; allow large XAU labels
         // to show both decimal digits instead of clipping the final character.
         margin = { top: 30, right: Math.max(60,
@@ -1132,12 +1159,9 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         padding = 10,
         indicator = { top: height, height: 90 },
         ibottom = { bottom: indicator.top + indicator.height + padding };
-
-    const { vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
-        MacdLine, MacdSignal, MacdHist, MacdCross, Roc, Rsi, StochK, StochD } = series;
-    ({ bband, macd, macdh, roc, rsi, stoch } = series.enabled);
+    const { ddata, MacdLine, MacdSignal, MacdHist, Roc } = series;
     const xrx = (_d, i) => x(ddata[i]);
-    // MACD stays first. Only ROC / RSI follow their selection order.
+    // MACD stays first. Only ROC / RSI / Stochastic follow their selection order.
     const panels = [];
     let panelTop = indicator.top;
     const oscillatorPanels = (this.oscillatorOrder || ['roc', 'rsi'])
@@ -1175,7 +1199,6 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
         tformat = datalength < limdata ? format.daily : format.monthly;
 
-    // Price chart, bollinger and ema
     // Tick labels need more decimals once zoom narrows the price range.
     const priceDecimals = () => {
         const [low, high] = y.domain(), span = Math.abs(high - low);
@@ -1266,12 +1289,72 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     this.plotScales = { x, y, ...(macd || macdh ? { macd: yMacd } : {}),
         ...(roc ? { roc: yRoc } : {}), ...(rsi ? { rsi: yRsi } : {}), ...(stoch ? { stoch: yStoch } : {}) };
 
-    let line = d3.line()
-        .defined(Number.isFinite)
-        .x(xrx)
-        .y(y);
+    const svg = this.svg;
+    const roundn = this.roundn.bind(this);
+    const ctx = {
+        chart, svg, currency, interval, config, series, ...series, enabled: series.enabled,
+        macd, macdh, roc, rsi, stoch, xrx, datalength,
+        margin, width, height, padding, indicator, panels, panelByKey, lowerBottom, dateY,
+        x, y, baseY, baseRange, plotLeft, plotRight, priceHeight, applyPricePan, visibleTicks,
+        xAxis, yAxis, yMacd, yMAxis, yRoc, yRCAxis, yRsi, yRAxis, yStoch, ySTAxis,
+        macdhbinsl: 1500, macdhbinsm: 900,
+        // indicator colors
+        colors: {
+            price: '#38678f',
+            mca: series.MA_a != 0 ? '#e04b4b' : '',
+            mcb: series.MA_b != 0 ? '#00b061' : '',
+            mcc: series.MA_c != 0 ? '#ff7dcd' : '',
+            mcd: series.MA_d != 0 ? '#a39354' : '',
+            ubbc: series.UpperBand != 0 ? '#909090' : '',
+            lbbc: series.LowerBand != 0 ? '#909090' : '',
+            macdsc: MacdSignal != 0 ? '#ff8084' : '',
+            macdlc: MacdLine != 0 ? '#0061cb' : '',
+            macdhc: MacdHist != 0 ? '#907070' : '',
+            macdhcp: MacdHist != 0 ? '#708070' : '',
+            macdhistlegc: MacdHist != 0 ? '#808080' : '',
+            rocc: Roc != 0 ? '#f28f3b' : '',
+            rsic: series.Rsi != 0 ? '#505050' : '',
+            stochkc: '#7a5fc0',
+            stochdc: '#c9a227',
+            signalup: '#00b061',
+            signaldown: '#e04b4b'
+        },
+        intervalTag: interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)')),
+        pointerFormat: value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—',
+        hrLines: []
+    };
+    // Horizontal reference line (zero, 30 / 70, 20 / 80) across the whole plot.
+    ctx.hr = (value, yscale, color, swd) => {
+        let dateRange = [d3.max(ddata), d3.min(ddata)];
+        const xs = dateRange.map(date => x(date)); // full plot width, independent of zoom
+        const path = svg.append('g')
+            .attr('stroke-width', 0.3)
+            .selectAll('path')
+            .data([[value, value]])
+            .join('path')
+            .attr('stroke', color)
+            .attr('stroke-width', swd);
+        const place = () => path.attr('d', d3.line().x((_d, i) => xs[i]).y(() => yscale(value)));
+        place();
+        ctx.hrLines.push(place);
+    };
+    // Legend entries side by side on wide screens, stacked otherwise.
+    ctx.stackLegend = selection => {
+        let offset = 0;
+        const wide = svgvB.offsetWidth > 1050;
+        selection.attr('transform', function () {
+            const at = offset;
+            offset += wide ? this.getBBox().width + 23 : this.getBBox().height + 1;
+            return wide ? 'translate(' + at + ', 0)' : 'translate(0, ' + at + ')';
+        });
+    };
+    return ctx;
+}
 
-    const svg = this.svg
+// SVG frame: size, price clip and the two main axes.
+drawFrame(ctx) {
+    const { svg, x, margin, width, height, padding, dateY, xAxis, yAxis } = ctx;
+    svg
         // Cursor: a dot while the crosshair is on, the default arrow when it is off,
         // and a grabbing hand while the chart is dragged (see css.css).
         .classed('crosshair-on', Boolean(this.config.cross))
@@ -1296,26 +1379,22 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     svg.append('g')
         .attr('class', 'price-axis')
         .call(yAxis);
+}
 
-    // indicator colors
-    let price = '#38678f',
-        mca = MA_a != 0 ? '#e04b4b' : '',
-        mcb = MA_b != 0 ? '#00b061' : '',
-        mcc = MA_c != 0 ? '#ff7dcd' : '',
-        mcd = MA_d != 0 ? '#a39354' : '',
-        ubbc = UpperBand != 0 ? '#909090' : '',
-        lbbc = LowerBand != 0 ? '#909090' : '',
-        macdsc = MacdSignal != 0 ? '#ff8084' : '',
-        macdlc = MacdLine != 0 ? '#0061cb' : '',
-        macdhc = MacdHist != 0 ? '#907070' : '',
-        macdhcp = MacdHist != 0 ? '#708070' : '',
-        macdhistlegc = MacdHist != 0 ? '#808080' : '',
-        rocc = Roc != 0 ? '#f28f3b' : '',
-        rsic = Rsi != 0 ? '#505050' : '',
-        stochkc = '#7a5fc0',
-        stochdc = '#c9a227',
-        signalup = '#00b061',
-        signaldown = '#e04b4b';
+// Price panel: grid, latest price, Bollinger area, price and overlay lines, legend.
+drawPricePanel(ctx) {
+    const { svg, x, y, xrx, vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
+        config, currency, colors, intervalTag, margin, width, height, padding, plotLeft, plotRight,
+        lowerBottom, visibleTicks, yAxis } = ctx;
+    const { ma_a, ma_b, ma_c, ma_d, mma_a, mma_b, mma_c, mma_d } = config;
+    const { price, mca, mcb, mcc, mcd, ubbc, lbbc } = colors;
+    const SwMALegend = this.SwMALegend.bind(this), roundn = this.roundn.bind(this);
+    const bband = ctx.enabled.bband;
+
+    let line = d3.line()
+        .defined(Number.isFinite)
+        .x(xrx)
+        .y(y);
 
     // Grid lines follow the axis ticks, so they are redrawn on zoom and pan.
     const gridLayer = svg.append('g').attr('class', 'price-grid').attr('pointer-events', 'none');
@@ -1346,6 +1425,8 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     };
 
     // bollinger band area
+    const bandArea = () => d3.area().x(xrx)
+        .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low));
     if (bband) {
         svg.append('g')
             .attr('class', 'abbc')
@@ -1353,10 +1434,7 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
             .selectAll('path')
             .data([BandData])
             .join('path')
-            .attr('d', d3.area()
-                .x(xrx)
-                .y0((_d, i) => y(BandData[i].high))
-                .y1((_d, i) => y(BandData[i].low)));
+            .attr('d', bandArea());
     }
 
     svg.append('g')
@@ -1372,70 +1450,22 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         .attr('stroke', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc][i])
         .attr('d', line);
 
-    // horizontal line function
-    const hrLines = [];
-    function hr(y, yscale, color, swd) {
-        let dateRange = [d3.max(ddata), d3.min(ddata)];
-        const xs = dateRange.map(date => x(date)); // full plot width, independent of zoom
-        const path = svg.append('g')
-            .attr('stroke-width', 0.3)
-            .selectAll('path')
-            .data([[y, y]])
-            .join('path')
-            .attr('stroke', color)
-            .attr('stroke-width', swd);
-        const place = () => path.attr('d', d3.line().x((_d, i) => xs[i]).y(() => yscale(y)));
-        place();
-        hrLines.push(place);
-    }
+    // Legend text: the latest values, or the values at the crosshair date.
+    const legendText = (date, value, fd, maValue) => (_d, i) => {
+        const ma = (data, kind, period, v) => !isNaN(data[0]) ? SwMALegend(kind) + period + ': ' + fd(v) : '';
+        return [
+            d3.timeFormat('%a, %d %b %Y')(date) + ', ' + currency + '/ALL: ' + fd(value) + ' ' + intervalTag,
+            ma(MA_a, mma_a, ma_a, maValue.MA_a), ma(MA_b, mma_b, ma_b, maValue.MA_b),
+            ma(MA_c, mma_c, ma_c, maValue.MA_c), ma(MA_d, mma_d, ma_d, maValue.MA_d),
+            !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(maValue.UpperBand) : '',
+            !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(maValue.LowerBand) : ''
+        ].filter(x => x !== '')[i];
+    };
+    const latest = legendText(ddata[0], vdata[0], formatFxNumber, {
+        MA_a: roundn(MA_a[0]), MA_b: roundn(MA_b[0]), MA_c: roundn(MA_c[0]), MA_d: roundn(MA_d[0]),
+        UpperBand: UpperBand[0], LowerBand: LowerBand[0]
+    });
 
-    // price chart legend
-    const lglatest = function (_d, i) {
-        let formatdate = d3.timeFormat('%a, %d %b %Y'),
-            fd = formatFxNumber,
-            txt_datenprice = formatdate(ddata[0]) + ', ' + currency + '/ALL: ' + fd(vdata[0]) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
-            txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(roundn(MA_a[0])) : '',
-            txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(roundn(MA_b[0])) : '',
-            txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(roundn(MA_c[0])) : '',
-            txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(roundn(MA_d[0])) : '',
-            txt_upbb = !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(UpperBand[0]) : '',
-            txt_lobb = !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(LowerBand[0]) : '';
-        return [txt_datenprice, txt_ma_a, txt_ma_b, txt_ma_c, txt_ma_d, txt_upbb, txt_lobb].filter(x => x !== '')[i];
-    }
-
-    // macdh chart legend
-    const macdlglatest = function (_d, i) {
-        let fd = d3.format(','),
-            line = macd ? MacdLine[0][0] : 0,
-            signal = macd ? MacdSignal[0][0] : 0,
-            histogram = macdh ? MacdHist[0][0] : 0,
-            txt_macdl = macd ? 'MACD Line: ' + fd(roundn(line)) : 0,
-            txt_macds = macd ? 'MACD Signal: ' + fd(roundn(signal)) : 0,
-            txt_macdh = macdh ? 'MACD Histogram: ' + fd(roundn(histogram)) : 0;
-        return [txt_macdl, txt_macds, txt_macdh].filter(x => x != 0)[i];
-    }
-
-    // Keep the original legend text, now attached to each indicator's own panel.
-    const rrlatest = (name, data) => name + ': ' +
-        (Number.isFinite(data[0]) ? d3.format(',')(roundn(data[0])) : '—');
-
-    // legend global f
-    let offset = 0,
-        nodeWidth = (d) => d.getBBox().width,
-        nodeHeight = (d) => d.getBBox().height;
-    const offsetf = function () {
-        let x = offset;
-        if (svgvB.offsetWidth > maxlgwidth) {
-            offset += nodeWidth(this) + legendoffsetw;
-            return 'translate(' + x + ', 0)';
-        }
-        else {
-            offset += nodeHeight(this) + legendoffseth;
-            return 'translate(0, ' + x + ')';
-        }
-    }
-
-    // price chart legend
     const legend = svg.append('g')
         .attr('class', 'legend')
         .attr('transform', 'translate(' + padding + ',' + margin.top + ')');
@@ -1446,174 +1476,198 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         .append('text')
         .style('fill', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc].filter(x => x !== '')[i]);
 
-    offset = 0; // legend text offset
-    lg.text(lglatest)
-        .attr('transform', offsetf);
+    lg.text(latest);
+    ctx.stackLegend(lg);
 
-    let macdlg,
-        roclg, rsilg;
+    return {
+        legend: {
+            reset: () => lg.text(latest),
+            show: snapshot => lg.text(legendText(snapshot.date, snapshot.values.vdata, formatFxNumber, snapshot.values))
+        },
+        // Lines that follow the price scale; called after the price pan is applied.
+        update: () => {
+            svg.select('.price-axis').call(yAxis);
+            svg.select('.dline').selectAll('path').attr('d', line);
+            svg.select('.abbc').selectAll('path').attr('d', bandArea());
+        },
+        updateOverlay: () => { drawGrid(); updateLastPrice(); }
+    };
+}
 
-    // MACD
-    if (macd || macdh) {
+// MACD panel: histogram, MACD and signal lines, zero line, legend.
+drawMacdPanel(ctx) {
+    const { svg, xrx, yMacd, yMAxis, MacdLine, MacdSignal, MacdHist, macd, macdh, colors,
+        datalength, macdhbinsl, macdhbinsm, padding, indicator, pointerFormat } = ctx;
+    if (!(macd || macdh)) return { update: () => {} };
+    const { macdlc, macdsc, macdhc, macdhcp, macdhistlegc } = colors;
+    const roundn = this.roundn.bind(this);
+    svg.append('g')
+        .attr('class', 'macd-axis')
+        .call(yMAxis);
+
+    if (macdh) {
         svg.append('g')
-            .attr('class', 'macd-axis')
-            .call(yMAxis);
-
-        if (macdh) {
-            svg.append('g')
-                .attr('class', 'zoom-histogram')
-                .selectAll('rect')
-                .data(...MacdHist)
-                .join('rect')
-                .attr('class', 'macdhc')
-                .attr('x', xrx)
-                .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
-                .attr('height', d => Math.abs(yMacd(d) - yMacd(0)))
-                .attr('width', (datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5)))
-                .attr('transform', 'translate(' + (datalength > macdhbinsl ? -1 : (datalength > macdhbinsm ? -1.5 : -2)) + ', 0)')
-                .attr('fill', d => { return d > 0 ? macdhcp : macdhc });
-        }
-
-        if (macd) {
-            svg.append('g')
-                .attr('class', 'zoom-macd')
-                .attr('fill', 'none')
-                .attr('stroke-linejoin', 'round')
-                .attr('stroke-linecap', 'round')
-                .attr('stroke-width', 1)
-                .selectAll('path')
-                .data([...MacdLine, ...MacdSignal])
-                .join('path')
-                .attr('stroke', (_d, i) => {
-                    return [macdlc, macdsc][i];
-                })
-                .attr('d', d3.line()
-                    .defined(Number.isFinite)
-                    .x(xrx)
-                    .y(yMacd));
-        }
-
-        hr(0, yMacd, '#808080', 0.3);
-
-        // macd legend
-        const macdlegend = svg.append('g')
-            .attr('class', 'macdlegend')
-            .attr('transform', 'translate(' + padding + ',' + indicator.top + ')');
-
-        macdlg = macdlegend.selectAll('g')
-            .data([MacdLine, MacdSignal, MacdHist])
-            .join('g')
-            .append('text')
-            .style('fill', (_d, i) => [macdlc, macdsc, macdhistlegc].filter(x => x !== '')[i]);
-
-        offset = 0; // macd legend text offset
-        macdlg.text(macdlglatest)
-            .attr('transform', offsetf);
+            .attr('class', 'zoom-histogram')
+            .selectAll('rect')
+            .data(...MacdHist)
+            .join('rect')
+            .attr('class', 'macdhc')
+            .attr('x', xrx)
+            .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+            .attr('height', d => Math.abs(yMacd(d) - yMacd(0)))
+            .attr('width', (datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5)))
+            .attr('transform', 'translate(' + (datalength > macdhbinsl ? -1 : (datalength > macdhbinsm ? -1.5 : -2)) + ', 0)')
+            .attr('fill', d => { return d > 0 ? macdhcp : macdhc });
     }
 
+    const macdLine = () => d3.line().defined(Number.isFinite).x(xrx).y(yMacd);
+    if (macd) {
+        svg.append('g')
+            .attr('class', 'zoom-macd')
+            .attr('fill', 'none')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-width', 1)
+            .selectAll('path')
+            .data([...MacdLine, ...MacdSignal])
+            .join('path')
+            .attr('stroke', (_d, i) => {
+                return [macdlc, macdsc][i];
+            })
+            .attr('d', macdLine());
+    }
+
+    ctx.hr(0, yMacd, '#808080', 0.3);
+
+    // Legend text: the latest values, or the values at the crosshair date.
+    const legendText = (line, signal, histogram, fd) => (_d, i) => [
+        macd ? 'MACD Line: ' + fd(line) : 0,
+        macd ? 'MACD Signal: ' + fd(signal) : 0,
+        macdh ? 'MACD Histogram: ' + fd(histogram) : 0
+    ].filter(x => x != 0)[i];
+    const latestFormat = value => d3.format(',')(roundn(value));
+    const latest = legendText(macd ? MacdLine[0][0] : 0, macd ? MacdSignal[0][0] : 0, macdh ? MacdHist[0][0] : 0, latestFormat);
+
+    const macdlegend = svg.append('g')
+        .attr('class', 'macdlegend')
+        .attr('transform', 'translate(' + padding + ',' + indicator.top + ')');
+
+    const macdlg = macdlegend.selectAll('g')
+        .data([MacdLine, MacdSignal, MacdHist])
+        .join('g')
+        .append('text')
+        .style('fill', (_d, i) => [macdlc, macdsc, macdhistlegc].filter(x => x !== '')[i]);
+
+    macdlg.text(latest);
+    ctx.stackLegend(macdlg);
+
+    return {
+        legend: {
+            reset: () => macdlg.text(latest),
+            show: ({ values }) => macdlg.text(legendText(values.MacdLine, values.MacdSignal, values.MacdHist, pointerFormat))
+        },
+        update: () => {
+            svg.select('.zoom-macd').selectAll('path').attr('d', macdLine());
+            // Bar width follows the spacing between points (never thinner than the
+            // original bins), so zooming in widens the bars instead of leaving lines.
+            const { x, ddata } = ctx;
+            const histStep = datalength > 1 ? Math.abs(x(ddata[1]) - x(ddata[0])) : 0;
+            const histWidth = Math.max(datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5), Math.min(histStep * 0.7, 14));
+            svg.select('.zoom-histogram').selectAll('rect').attr('transform', null)
+                .attr('width', histWidth).attr('x', (d, i) => xrx(d, i) - histWidth / 2)
+                .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+                .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
+            svg.select('.macd-axis').call(yMAxis);
+        }
+    };
+}
+
+// ROC, RSI and Stochastic panels, each with its reference lines and legend.
+drawOscillatorPanels(ctx) {
+    const { svg, xrx, yRoc, yRCAxis, yRsi, yRAxis, yStoch, ySTAxis, Roc, Rsi, StochK, StochD,
+        roc, rsi, stoch, colors, padding, panelByKey, config } = ctx;
+    const { rocc, rsic, stochkc, stochdc } = colors;
+    const roundn = this.roundn.bind(this);
+    const oscLine = scale => d3.line().defined(Number.isFinite).x(xrx).y(scale);
+    const draw = (key, scale, axis, data, strokes) => {
+        svg.append('g')
+            .attr('class', key + '-axis')
+            .call(axis);
+        svg.append('g')
+            .attr('class', 'zoom-' + key)
+            .attr('fill', 'none')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-width', 1)
+            .selectAll('path')
+            .data(data)
+            .join('path')
+            .attr('stroke', (_d, i) => strokes[i])
+            .attr('d', oscLine(scale));
+    };
     // ROC
     if (roc) {
-        svg.append('g')
-            .attr('class', 'roc-axis')
-            .call(yRCAxis);
-
-        svg.append('g')
-            .attr('class', 'zoom-roc')
-            .attr('fill', 'none')
-            .attr('stroke-linejoin', 'round')
-            .attr('stroke-linecap', 'round')
-            .attr('stroke-width', 1)
-            .selectAll('path')
-            .data([Roc])
-            .join('path')
-            .attr('stroke', (_d, i) => {
-                return [rocc][i];
-            })
-            .attr('d', d3.line()
-                .defined(Number.isFinite)
-                .x(xrx)
-                .y(yRoc));
-
-        hr(0, yRoc, '#f28f3b', 0.3);
+        draw('roc', yRoc, yRCAxis, [Roc], [rocc]);
+        ctx.hr(0, yRoc, '#f28f3b', 0.3);
     }
-
     // RSI
     if (rsi) {
-        svg.append('g')
-            .attr('class', 'rsi-axis')
-            .call(yRAxis);
-
-        svg.append('g')
-            .attr('class', 'zoom-rsi')
-            .attr('fill', 'none')
-            .attr('stroke-linejoin', 'round')
-            .attr('stroke-linecap', 'round')
-            .attr('stroke-width', 1)
-            .selectAll('path')
-            .data([Rsi])
-            .join('path')
-            .attr('stroke', (_d, i) => {
-                return [rsic][i];
-            })
-            .attr('d', d3.line()
-                .defined(Number.isFinite)
-                .x(xrx)
-                .y(yRsi));
-
-        hr(30, yRsi, '#808080', 0.3);
-        hr(70, yRsi, '#808080', 0.3);
+        draw('rsi', yRsi, yRAxis, [Rsi], [rsic]);
+        ctx.hr(30, yRsi, '#808080', 0.3);
+        ctx.hr(70, yRsi, '#808080', 0.3);
     }
-
     // Stochastic (closing prices only: the source has no high / low).
     if (stoch) {
-        svg.append('g')
-            .attr('class', 'stoch-axis')
-            .call(ySTAxis);
-
-        svg.append('g')
-            .attr('class', 'zoom-stoch')
-            .attr('fill', 'none')
-            .attr('stroke-linejoin', 'round')
-            .attr('stroke-linecap', 'round')
-            .attr('stroke-width', 1)
-            .selectAll('path')
-            .data([StochK, StochD])
-            .join('path')
-            .attr('stroke', (_d, i) => [stochkc, stochdc][i])
-            .attr('d', d3.line()
-                .defined(Number.isFinite)
-                .x(xrx)
-                .y(yStoch));
-
-        hr(20, yStoch, '#808080', 0.3);
-        hr(80, yStoch, '#808080', 0.3);
+        draw('stoch', yStoch, ySTAxis, [StochK, StochD], [stochkc, stochdc]);
+        ctx.hr(20, yStoch, '#808080', 0.3);
+        ctx.hr(80, yStoch, '#808080', 0.3);
     }
 
     const oscFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
     const oscText = {
         roc: i => 'ROC: ' + oscFormat(Roc[i]),
         rsi: i => 'RSI: ' + oscFormat(Rsi[i]),
-        stoch: i => 'Stoch' + ST + ' %K: ' + oscFormat(StochK[i]) + ', %D: ' + oscFormat(StochD[i])
+        stoch: i => 'Stoch' + config.ST + ' %K: ' + oscFormat(StochK[i]) + ', %D: ' + oscFormat(StochD[i])
     };
-    const oscLegends = {};
-    for (const [key, enabled, data, color] of [['roc', roc, Roc, rocc], ['rsi', rsi, Rsi, rsic], ['stoch', stoch, StochK, stochkc]]) {
+    const legends = [];
+    for (const [key, enabled, color] of [['roc', roc, rocc], ['rsi', rsi, rsic], ['stoch', stoch, stochkc]]) {
         if (!enabled) continue;
         const text = svg.append('g')
             .attr('class', 'rsrclegend ' + key + 'legend')
             .attr('transform', 'translate(' + padding + ',' + panelByKey[key].top + ')')
             .append('g').append('text').style('fill', color);
-        offset = 0;
-        text.text(() => oscText[key](0)).attr('transform', offsetf);
-        oscLegends[key] = text;
+        text.text(() => oscText[key](0));
+        ctx.stackLegend(text);
+        legends.push({
+            reset: () => text.text(oscText[key](0)),
+            show: snapshot => text.text(oscText[key](snapshot.index))
+        });
     }
+    return {
+        legends,
+        update: () => {
+            svg.select('.zoom-roc').selectAll('path').attr('d', oscLine(yRoc));
+            svg.select('.zoom-rsi').selectAll('path').attr('d', oscLine(yRsi));
+            svg.select('.zoom-stoch').selectAll('path').attr('d', oscLine(yStoch));
+            svg.select('.roc-axis').call(yRCAxis);
+        }
+    };
+}
 
-    // crosshair
+// Crosshair: lines, tags on the axes, pointer hit areas and the legends it drives.
+// Returns hidePointer().
+drawCrosshair(ctx, legends) {
+    const chart = this;
+    const { svg, x, y, yMacd, yRoc, yRsi, yStoch, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+        MacdLine, MacdSignal, MacdHist, Roc, Rsi, StochK, StochD, macd, macdh, interval,
+        margin, width, padding, indicator, panelByKey, plotLeft, plotRight, lowerBottom, dateY, pointerFormat } = ctx;
+    const roundx = this.roundx.bind(this);
     let crssh = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none'),
         crosshair = crssh.append('g')
             .attr('stroke-width', 0.5);
 
-    // Touch: the value goes on the price axis and the date on the date axis,
-    // so nothing is drawn next to (or under) the finger.
+    // The value goes on the price axis and the date on the date axis,
+    // so nothing is drawn next to (or under) the cursor or the finger.
     const axisTag = (width, anchor) => {
         const tag = crssh.append('g').style('display', 'none');
         tag.append('rect').attr('height', 18).attr('rx', 2).attr('y', anchor).attr('fill', '#5b6270');
@@ -1627,12 +1681,12 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     axisX.select('text').attr('text-anchor', 'middle');
     const axisDate = d3.timeFormat(interval === 'mave' || interval === 'quave' ? '%b %Y' : '%d %b %Y');
 
-    // horizontal line
+    // vertical line
     crosshair.append('line')
         .attr('id', 'crsx')
         .attr('stroke', '#cdcdcd');
 
-    // vertical line
+    // horizontal line
     crosshair.append('line')
         .attr('id', 'crsy')
         .attr('stroke', '#cdcdcd');
@@ -1659,7 +1713,7 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
             .attr('height', yMacd.range()[0] - indicator.top);
     }
 
-    // Separate ROC and RSI hit areas; all panels share the same date pointer.
+    // Separate ROC, RSI and Stochastic hit areas; all panels share the same date pointer.
     for (const key of ['roc', 'rsi', 'stoch']) {
         const panel = panelByKey[key];
         if (!panel) continue;
@@ -1674,15 +1728,11 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     }
 
     function hidePointer() {
-            chart.state.pointerIndex = null;
-            crosshair.style('display', 'none');
-            axisY.style('display', 'none');
-            axisX.style('display', 'none');
-            lg.text(lglatest);
-            if (macd || macdh) {
-                macdlg.text(macdlglatest);
-            }
-            for (const key in oscLegends) oscLegends[key].text(oscText[key](0));
+        chart.state.pointerIndex = null;
+        crosshair.style('display', 'none');
+        axisY.style('display', 'none');
+        axisX.style('display', 'none');
+        legends.forEach(legend => legend.reset());
     }
     const pointerSeries = {
         vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
@@ -1691,133 +1741,94 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK, StochD
     };
     function paintPointer(event) {
-            const [rawX, yval] = d3.pointer(event, svg.node());
-            const panel = chart.panelGeometry.find(item => yval >= item.top && yval <= item.bottom)?.key;
-            if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
-            const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
-            if (!snapshot) { hidePointer(); return; }
-            chart.state.pointerIndex = snapshot.index;
-            const xval = snapshot.x, yVonx = snapshot.values;
-            crosshair.style('display', null);
+        const [rawX, yval] = d3.pointer(event, svg.node());
+        const panel = chart.panelGeometry.find(item => yval >= item.top && yval <= item.bottom)?.key;
+        if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
+        const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
+        if (!snapshot) { hidePointer(); return; }
+        chart.state.pointerIndex = snapshot.index;
+        const xval = snapshot.x, yVonx = snapshot.values;
+        crosshair.style('display', null);
 
-            const pointerFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
-
-            function maintxt(_d, i) {
-                let formatdate = d3.timeFormat('%a, %d %b %Y'),
-                    fd = formatFxNumber,
-                    txt_datenprice = formatdate(snapshot.date) + ', ' + currency + '/ALL: ' + fd(yVonx.vdata) + ' ' + (interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)'))),
-                    txt_ma_a = !isNaN(MA_a[0]) ? SwMALegend(mma_a) + ma_a + ': ' + fd(yVonx.MA_a) : '',
-                    txt_ma_b = !isNaN(MA_b[0]) ? SwMALegend(mma_b) + ma_b + ': ' + fd(yVonx.MA_b) : '',
-                    txt_ma_c = !isNaN(MA_c[0]) ? SwMALegend(mma_c) + ma_c + ': ' + fd(yVonx.MA_c) : '',
-                    txt_ma_d = !isNaN(MA_d[0]) ? SwMALegend(mma_d) + ma_d + ': ' + fd(yVonx.MA_d) : '',
-                    txt_upbb = !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(yVonx.UpperBand) : '',
-                    txt_lobb = !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(yVonx.LowerBand) : '';
-                return [txt_datenprice, txt_ma_a, txt_ma_b, txt_ma_c, txt_ma_d, txt_upbb, txt_lobb].filter(x => x !== '')[i];
+        // Value at the pointer height, used where no series has a value.
+        function linelabel() {
+            let fd = d3.format(',');
+            switch (panel) {
+                case 'roc': return roundx(yRoc.invert(yval));
+                case 'rsi': return roundx(yRsi.invert(yval));
+                case 'stoch': return roundx(Math.max(0, Math.min(100, yStoch.invert(yval))));
+                case 'macd': return fd(roundx(yMacd.invert(yval)));
+                default: return d3.format(',.2f')(y.invert(yval));
             }
+        }
 
-            function macdtxt(_d, i) {
-                let fd = pointerFormat,
-                    line = macd ? yVonx.MacdLine : 0,
-                    signal = macd ? yVonx.MacdSignal : 0,
-                    histogram = macdh ? yVonx.MacdHist : 0,
-                    txt_macdl = macd ? 'MACD Line: ' + fd(line) : 0,
-                    txt_macds = macd ? 'MACD Signal: ' + fd(signal) : 0,
-                    txt_macdh = macdh ? 'MACD Histogram: ' + fd(histogram) : 0;
-                return [txt_macdl, txt_macds, txt_macdh].filter(x => x != 0)[i];
-            }
+        // vertical line
+        crosshair.select('#crsx')
+            .attr('x1', xval)
+            .attr('y1', margin.top)
+            .attr('x2', xval)
+            .attr('y2', lowerBottom);
 
-            function linelabel() {
-                let fd = d3.format(',');
-                switch (panel) {
-                    case 'roc': return roundx(yRoc.invert(yval));
-                    case 'rsi': return roundx(yRsi.invert(yval));
-                    case 'stoch': return roundx(Math.max(0, Math.min(100, yStoch.invert(yval))));
-                    case 'macd':
-                        return fd(roundx(yMacd.invert(yval)));
-                        break;
-                    default:
-                        return d3.format(',.2f')(y.invert(yval));
-                }
-            }
+        // Like the vertical line snaps to the date, the horizontal line snaps to a
+        // series value at that date. In panels with several lines (MACD line, signal,
+        // histogram; Stochastic %K, %D; price and its overlays) it takes the one
+        // closest to the pointer.
+        // Where no series has a value (an indicator still warming up) it keeps the
+        // pointer's own height.
+        const oscillator = value => d3.format(',')(roundx(value));
+        const candidates = ({
+            // Price plus every overlay that is drawn (moving averages, Bollinger bands).
+            price: [yVonx.vdata, yVonx.MA_a, yVonx.MA_b, yVonx.MA_c, yVonx.MA_d,
+                    yVonx.UpperBand, yVonx.LowerBand].map(value => [value, y, formatFxNumber]),
+            macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
+                   [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
+                   [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
+            roc: [[yVonx.Roc, yRoc, oscillator]],
+            rsi: [[yVonx.Rsi, yRsi, oscillator]],
+            stoch: [[yVonx.StochK, yStoch, oscillator], [yVonx.StochD, yStoch, oscillator]]
+        })[panel] || [];
+        let target = null, distance = Infinity;
+        for (const candidate of candidates) {
+            if (!Number.isFinite(candidate[0])) continue;
+            const gap = Math.abs(candidate[1](candidate[0]) - yval);
+            if (gap < distance) { distance = gap; target = candidate; }
+        }
+        const snapped = target !== null;
+        const panelBox = chart.panelGeometry.find(item => item.key === panel);
+        const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
+        const valueText = snapped ? target[2](target[0]) : linelabel();
 
-            // vertical line
-            crosshair.select('#crsx')
-                .attr('x1', xval)
-                .attr('y1', margin.top)
-                .attr('x2', xval)
-                .attr('y2', lowerBottom);
+        // horizontal line
+        crosshair.select('#crsy')
+            .attr('x1', plotLeft)
+            .attr('y1', lineY)
+            .attr('x2', plotRight)
+            .attr('y2', lineY);
 
-            // Like the vertical line snaps to the date, the horizontal line snaps to a
-            // series value at that date. In panels with several lines (MACD line, signal,
-            // histogram; Stochastic %K, %D; price and its overlays) it takes the one
-            // closest to the pointer.
-            // Where no series has a value (an indicator still warming up) it keeps the
-            // pointer's own height.
-            const oscillator = value => d3.format(',')(roundx(value));
-            const candidates = ({
-                // Price plus every overlay that is drawn (moving averages, Bollinger bands).
-                price: [yVonx.vdata, yVonx.MA_a, yVonx.MA_b, yVonx.MA_c, yVonx.MA_d,
-                        yVonx.UpperBand, yVonx.LowerBand].map(value => [value, y, formatFxNumber]),
-                macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
-                       [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
-                       [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
-                roc: [[yVonx.Roc, yRoc, oscillator]],
-                rsi: [[yVonx.Rsi, yRsi, oscillator]],
-                stoch: [[yVonx.StochK, yStoch, oscillator], [yVonx.StochD, yStoch, oscillator]]
-            })[panel] || [];
-            let target = null, distance = Infinity;
-            for (const candidate of candidates) {
-                if (!Number.isFinite(candidate[0])) continue;
-                const gap = Math.abs(candidate[1](candidate[0]) - yval);
-                if (gap < distance) { distance = gap; target = candidate; }
-            }
-            const snapped = target !== null;
-            const panelBox = chart.panelGeometry.find(item => item.key === panel);
-            const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
-            const valueText = snapped ? target[2](target[0]) : linelabel();
+        axisY.style('display', null)
+            .attr('transform', 'translate(' + width + ',' + lineY + ')')
+            .select('text').text(valueText);
+        axisX.style('display', null)
+            .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
+            .select('text').text(axisDate(snapshot.date));
 
-            // horizontal line
-            crosshair.select('#crsy')
-                .attr('x1', plotLeft)
-                .attr('y1', lineY)
-                .attr('x2', plotRight)
-                .attr('y2', lineY);
-
-            // The value and the date are shown on the axes for every kind of pointer;
-            // nothing is drawn next to the cursor or the finger.
-            axisY.style('display', null)
-                .attr('transform', 'translate(' + width + ',' + lineY + ')')
-                .select('text').text(valueText);
-            axisX.style('display', null)
-                .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
-                .select('text').text(axisDate(snapshot.date));
-
-            lg.text(maintxt);
-
-            if (macd || macdh) {
-                macdlg.text(macdtxt);
-            }
-
-            for (const key in oscLegends) oscLegends[key].text(oscText[key](snapshot.index));
+        legends.forEach(legend => legend.show(snapshot));
     }
     hidePointer();
     this.bindChartPointer(svg, paintPointer, hidePointer);
+    return hidePointer;
+}
 
-    // draw trendlines
-    svg.append('g').attr('class', 'trend-viewport')
-        .attr('clip-path', `url(#${this.priceClipId})`).append('g')
-        .attr('class', 'trendlines');
-    svg.select('.trend-viewport').insert('g', '.trendlines').attr('class', 'levels');
-    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
-    this.bindTrendLines(svg, ddata, x, y,
-        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding }, currency, interval);
-    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y,
-        { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding });
-
-    // Crossover signals. With two or more moving averages the first two are
-    // compared (shorter period = fast line); with one, price against it.
+// Crossover signals. With two or more moving averages the first two are
+// compared (shorter period = fast line); with one, price against it.
+// Returns the function that places them after zoom.
+drawSignals(ctx) {
+    const chart = this;
+    const { svg, x, y, yMacd, ddata, vdata, MA_a, MA_b, MA_c, MA_d, MacdCross, macd, macdh,
+        config, colors, margin, height, padding, plotLeft, plotRight, panelByKey } = ctx;
+    const { ma_a, ma_b, ma_c, ma_d } = config;
     let updateSignals = () => {};
-    if (signals) {
+    if (config.signals) {
         const averages = [[MA_a, ma_a], [MA_b, ma_b], [MA_c, ma_c], [MA_d, ma_d]]
             .filter(([data]) => data && data.length > 1).slice(0, 2).sort((p, q) => p[1] - q[1]);
         const fast = averages.length === 2 ? averages[0][0] : (averages.length === 1 ? vdata : null);
@@ -1832,7 +1843,7 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         const triangle = d3.symbol().type(d3.symbolTriangle).size(34)();
         const layer = svg.append('g').attr('class', 'signals').attr('pointer-events', 'none');
         const nodes = layer.selectAll('path').data(marks).join('path').attr('d', triangle)
-            .attr('fill', mark => mark.up ? signalup : signaldown)
+            .attr('fill', mark => mark.up ? colors.signalup : colors.signaldown)
             .attr('clip-path', mark => 'url(#' + chart.priceClipId + (mark.panel === 'price' ? '' : '-' + mark.panel) + '-marks)');
         // Clip the unrotated wrapper, not the rotated symbol.
         nodes.each(function () {
@@ -1858,9 +1869,16 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
         .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
     markClip('', margin.top, height - padding);
     if (panelByKey.macd) markClip('-macd', panelByKey.macd.top, panelByKey.macd.bottom);
+    return updateSignals;
+}
 
-    // Update only geometry during gestures; indicator values remain calculated
-    // from the complete history, so zoom does not restart their warm-up periods.
+// Zoom and pan. Only geometry is updated during gestures; indicator values stay
+// calculated from the loaded history, so zoom does not restart their warm-up.
+setupZoom(ctx, { panels: panelUpdates, afterAxes, hidePointer }) {
+    const chart = this;
+    const { svg, x, y, baseY, baseRange, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+        MacdLine, MacdSignal, MacdHist, Roc, macd, macdh, roc, yMacd, yRoc, datalength,
+        margin, height, padding, panels, plotLeft, plotRight, priceHeight, applyPricePan, xAxis } = ctx;
     for (const panel of panels) {
         const clipId = this.priceClipId + '-' + panel.key;
         svg.select('defs').append('clipPath').attr('id', clipId)
@@ -1949,32 +1967,11 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
             }
         }
         applyPricePan();
-        svg.select('.price-axis').call(yAxis);
-        svg.select('.dline').selectAll('path').attr('d', line);
-        svg.select('.abbc').selectAll('path').attr('d', d3.area().x(xrx)
-            .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low)));
-        svg.select('.zoom-macd').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yMacd));
-        svg.select('.zoom-roc').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRoc));
-        svg.select('.zoom-rsi').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yRsi));
-        svg.select('.zoom-stoch').selectAll('path').attr('d', d3.line().defined(Number.isFinite).x(xrx).y(yStoch));
-        // Bar width follows the spacing between points (never thinner than the
-        // original bins), so zooming in widens the bars instead of leaving lines.
-        const histStep = datalength > 1 ? Math.abs(x(ddata[1]) - x(ddata[0])) : 0;
-        const histWidth = Math.max(datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5), Math.min(histStep * 0.7, 14));
-        svg.select('.zoom-histogram').selectAll('rect').attr('transform', null)
-            .attr('width', histWidth).attr('x', (d, i) => xrx(d, i) - histWidth / 2)
-            .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
-            .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
-        svg.select('.macd-axis').call(yMAxis);
-        svg.select('.roc-axis').call(yRCAxis);
-        hrLines.forEach(place => place());
+        panelUpdates.forEach(update => update());
+        ctx.hrLines.forEach(place => place());
         svg.select('.date-axis').call(xAxis).select('.domain')
             .attr('d', `M${plotLeft},0.5H${plotRight}`);
-        drawGrid();
-        updateLastPrice();
-        updateSignals();
-        chart.updateTrendLines();
-        updateInfoMarkers();
+        afterAxes.forEach(update => update());
         hidePointer();
     };
     this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
@@ -2011,7 +2008,6 @@ const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     svg.on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
         .on('touchmove.guard', event => { if (chart.touchInspect && event.cancelable) event.preventDefault(); }, { passive: false });
     svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
-
 }
 
 // round functions
