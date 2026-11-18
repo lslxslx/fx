@@ -872,7 +872,7 @@ class HistoricalPriceChart {
   }
 
   // Sizes of the chart and the vertical position of every panel. By default the whole
-  // chart fits the window: the price panel takes 3 parts, every indicator panel 1.
+  // chart fits the window: the price panel takes 3.5 parts, every indicator panel 1.
   // A panel whose height was set by dragging the line under it keeps that height;
   // the panels below simply move down (the chart grows) or up.
   layoutGeometry(series, legends) {
@@ -894,12 +894,12 @@ class HistoricalPriceChart {
       .map(key => [key, { roc, rsi, stoch }[key]]);
     for (const [key, enabled] of [['macd', macd || macdh], ...oscillatorPanels]) if (enabled) keys.push(key);
     const header = key => legendLayout[key].rows * rowHeight + 4;
-    // Total height: 60% of the window for the price alone, 12% more per indicator,
+    // Total height: 65% of the window for the price alone, 12% more per indicator,
     // never more than the window.
     const vh = window.innerHeight;
-    const total = Math.min(vh - 24, vh * (0.6 + 0.12 * keys.length));
+    const total = Math.min(vh - 24, vh * (0.65 + 0.12 * keys.length));
     const fixed = margin.top + keys.reduce((sum, key) => sum + gap + header(key), 0) + padding + bottomSpace;
-    const weight = key => key === 'price' ? 3 : 1;
+    const weight = key => key === 'price' ? 3.5 : 1;
     const totalWeight = weight('price') + keys.length;
     const free = Math.max(0, total - fixed);
     const heights = this.panelHeights || {};
