@@ -1816,7 +1816,7 @@ class HistoricalPriceChart {
         .join('path').attr('class', 'trend').attr('fill', 'none')
         .attr('tabindex', 0).attr('role', 'button')
         .attr('aria-label', 'Përzgjidh vijën e trendit për të lëvizur skajet ose për ta fshirë me Delete')
-        .attr('stroke', trend => trend.id === chart.selectedTrendId ? '#38678f' : '#606060').attr('stroke-width', 2)
+        .attr('stroke', '#606060')
         .attr('stroke-linecap', 'round').attr('vector-effect', 'non-scaling-stroke')
         .attr('d', trend => line(this.projectTrend(trend, x, y)));
       svg.select('.trendlines').selectAll('path').style('cursor', 'pointer')
@@ -1852,14 +1852,15 @@ class HistoricalPriceChart {
       });
       svg.select('.trendlines').selectAll('path.trend')
         .attr('stroke-dasharray', trend => trend.kind === 'fib' ? '4 3' : null)
-        .attr('stroke-width', trend => trend.kind === 'fib' ? 1 : 2);
+        // Thin while idle, thicker when selected; always grey, never the blue of the price line.
+        .attr('stroke-width', trend => trend.id === chart.selectedTrendId ? 2 : (trend.kind === 'fib' ? 1 : 1.25));
       const selected = chart.drawingTrend ? null : lines.find(trend => trend.id === chart.selectedTrendId);
       const data = selected ? ['start','end'].map(key => ({ trend: selected, key })) : [];
       const handles = svg.select('.trend-handles').selectAll('g.trend-handle')
         .data(data, handle => `${handle.trend.id}-${handle.key}`).join(enter => {
           const group = enter.append('g').attr('class', 'trend-handle');
           group.append('circle').attr('r', 16).attr('fill', 'transparent');
-          group.append('circle').attr('r', 6).attr('fill', '#fff').attr('stroke', '#38678f').attr('stroke-width', 2);
+          group.append('circle').attr('r', 6).attr('fill', '#fff').attr('stroke', '#606060').attr('stroke-width', 2);
           return group;
         }).attr('tabindex', 0).attr('role', 'button').style('cursor', 'move').style('touch-action', 'none')
         .attr('aria-label', handle => `${handle.key === 'start' ? 'Fillimi' : 'Fundi'} i vijës: ${new Date(handle.trend[handle.key].date).toISOString().slice(0, 10)}, ${handle.trend[handle.key].price.toFixed(2)}. Lëvize me shigjetat.`)
