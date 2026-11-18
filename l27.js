@@ -317,6 +317,16 @@ class HistoricalPriceChart {
       if (!this.container.contains(event.target)) this.hideCrosshair?.();
     });
     this.listen(window, 'keydown', event => {
+      // Delete / Backspace removes the selected trend line (selected by clicking it,
+      // drawing it or moving one of its ends). Never while typing in a field.
+      if ((event.key === 'Delete' || event.key === 'Backspace') && this.selectedTrendId !== null &&
+          !this.trendEdit && !this.trendDraft && !event.target.closest?.('input, textarea, select, [contenteditable]')) {
+        event.preventDefault();
+        this.trendLines = this.trendLines.filter(item => item.id !== this.selectedTrendId);
+        this.selectedTrendId = null;
+        this.updateTrendLines?.();
+        return;
+      }
       if (event.key !== 'Escape') return;
       if (this.trendEdit) this.finishTrendEdit(false);
       else if (this.trendDraft) this.cancelTrendDraft();
@@ -728,16 +738,20 @@ class HistoricalPriceChart {
 
   // Date scale and axis. One position per observation (weekends leave no gaps).
   timeScale(ddata, { minwidth, margin, width, padding, dateY }) {
-    const chart = this, limdata = 50;
+    // The last point stops this far from the price axis, so markers and histogram
+    // bars drawn on it stay whole.
+    const chart = this, limdata = 50, axisGap = 20;
     let datalength = ddata.length,
       format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
       tformat = datalength < limdata ? format.daily : format.monthly;
     let x = d3.scalePoint()
       .domain(ddata)
-      .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
+      .range([width < minwidth ? width + margin.right - padding : width - axisGap, padding]);
     const baseRange = x.range().slice();
     this.zoomTransform = this.resizeZoom(baseRange);
     const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
+    // Drawing is clipped to this wider band: from the left edge up to the price axis.
+    const clipLeft = 0, clipRight = Math.max(width, plotRight);
     // Invert by observation index, not elapsed time (weekends remain gap-free).
     x.invert = pixel => {
       const range = x.range();
@@ -756,7 +770,7 @@ class HistoricalPriceChart {
         .tickValues(visibleTicks())
         .tickFormat(date => (datalength / (chart.zoomTransform?.k || 1) < limdata ? format.daily : tformat)(date)));
     const xrx = (_d, i) => x(ddata[i]);
-    return { x, xAxis, xrx, baseRange, plotLeft, plotRight, visibleTicks, datalength };
+    return { x, xAxis, xrx, baseRange, plotLeft, plotRight, clipLeft, clipRight, visibleTicks, datalength };
   }
 
   // Price scale and axis. Price-only bounds keep the scale stable when overlays are
@@ -894,7 +908,7 @@ class HistoricalPriceChart {
 
   // SVG frame: size, price clip and the two main axes.
   drawFrame(ctx) {
-    const { svg, x, margin, width, height, padding, dateY, xAxis, yAxis } = ctx;
+    const { svg, clipLeft, clipRight, margin, width, height, padding, dateY, xAxis, yAxis } = ctx;
     svg
       // Cursor: a dot while the crosshair is on, the default arrow when it is off,
       // and a grabbing hand while the chart is dragged (see css.css).
@@ -907,9 +921,9 @@ class HistoricalPriceChart {
       .attr('id', this.priceClipId)
       .attr('clipPathUnits', 'userSpaceOnUse')
       .append('rect')
-      .attr('x', Math.min(...x.range()))
+      .attr('x', clipLeft)
       .attr('y', margin.top)
-      .attr('width', Math.abs(x.range()[1] - x.range()[0]))
+      .attr('width', clipRight - clipLeft)
       .attr('height', Math.max(0, height - padding - margin.top));
 
     svg.append('g')
@@ -1407,7 +1421,7 @@ class HistoricalPriceChart {
       };
     }
     const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
-      .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
+      .append('rect').attr('x', ctx.clipLeft).attr('y', top).attr('width', ctx.clipRight - ctx.clipLeft).attr('height', Math.max(0, bottom - top));
     markClip('', margin.top, height - padding);
     if (panelByKey.macd) markClip('-macd', panelByKey.macd.top, panelByKey.macd.bottom);
     return updateSignals;
@@ -1425,8 +1439,8 @@ class HistoricalPriceChart {
       svg.select('defs').append('clipPath').attr('id', clipId)
         // 2px of room on each side: a line resting exactly on a limit (closing-price
         // Stochastic often sits on 0 or 100) is not cut in half by the clip.
-        .append('rect').attr('x', plotLeft).attr('y', panel.top - 2)
-        .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top + 4);
+        .append('rect').attr('x', ctx.clipLeft).attr('y', panel.top - 2)
+        .attr('width', ctx.clipRight - ctx.clipLeft).attr('height', panel.bottom - panel.top + 4);
       svg.selectAll(panel.key === 'macd' ? '.zoom-macd, .zoom-histogram' : '.zoom-' + panel.key)
         .attr('clip-path', `url(#${clipId})`);
     }
@@ -1745,7 +1759,7 @@ class HistoricalPriceChart {
         .data(lines, trend => trend.id)
         .join('path').attr('class', 'trend').attr('fill', 'none')
         .attr('tabindex', 0).attr('role', 'button')
-        .attr('aria-label', 'Përzgjidh vijën e trendit për të lëvizur skajet')
+        .attr('aria-label', 'Përzgjidh vijën e trendit për të lëvizur skajet ose për ta fshirë me Delete')
         .attr('stroke', trend => trend.id === chart.selectedTrendId ? '#38678f' : '#606060').attr('stroke-width', 2)
         .attr('stroke-linecap', 'round').attr('vector-effect', 'non-scaling-stroke')
         .attr('d', trend => line(this.projectTrend(trend, x, y)));
@@ -1756,10 +1770,7 @@ class HistoricalPriceChart {
         .on('click.trends', (event, trend) => {
           if (chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
           event.stopPropagation();
-          if (event.altKey) {
-            chart.trendLines = chart.trendLines.filter(item => item.id !== trend.id);
-            if (chart.selectedTrendId === trend.id) chart.selectedTrendId = null;
-          } else chart.selectedTrendId = trend.id;
+          chart.selectedTrendId = trend.id; // Delete / Backspace removes it (bindControls)
           redraw();
         }).on('keydown.trends', (event, trend) => {
           if (!['Enter', ' '].includes(event.key) || chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
