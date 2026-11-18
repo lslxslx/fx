@@ -740,7 +740,7 @@ class HistoricalPriceChart {
   timeScale(ddata, { minwidth, margin, width, padding, dateY }) {
     // The last point stops this far from the price axis, so markers and histogram
     // bars drawn on it stay whole.
-    const chart = this, limdata = 50, axisGap = 20;
+    const chart = this, limdata = 50, axisGap = 12;
     let datalength = ddata.length,
       format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
       tformat = datalength < limdata ? format.daily : format.monthly;
