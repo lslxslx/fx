@@ -278,7 +278,7 @@ class HistoricalPriceChart {
     this.infoRequestId = 0;
     this.trendLines = [];
     this.levels = []; // Horizontal support / resistance levels, scoped to currency.
-    this.panelWeights = {}; // Panel heights set by dragging the space between panels.
+    this.panelHeights = {}; // Panel heights (chart units) set by dragging the line under a panel.
     this.nextTrendId = 0;
     this.trendDraft = null;
     this.selectedTrendId = null;
@@ -522,8 +522,8 @@ class HistoricalPriceChart {
     for (const ma of averages.slice(0, HistoricalPriceChart.maxAverages)) {
       if (ma && ['S', 'E', 'D'].includes(ma.type)) this.addMovingAverage(ma.type, String(ma.period ?? ''), Number.isInteger(ma.slot) ? ma.slot : null);
     }
-    if (saved.weights && typeof saved.weights === 'object') {
-      this.panelWeights = Object.fromEntries(Object.entries(saved.weights)
+    if (saved.heights && typeof saved.heights === 'object') {
+      this.panelHeights = Object.fromEntries(Object.entries(saved.heights)
         .filter(([key, value]) => ['price', 'macd', 'roc', 'rsi', 'stoch'].includes(key) && Number.isFinite(value) && value > 0));
     }
   }
@@ -544,7 +544,7 @@ class HistoricalPriceChart {
         levels: this.levels.map(({ currency, price }) => ({ currency, price })),
         mas: Array.from(document.querySelectorAll('#ma-list .ma-row')).map(row => ({
           type: row.querySelector('.ma-type').value, period: row.querySelector('.ma-period').value, slot: Number(row.dataset.slot) })),
-        weights: this.panelWeights || {}
+        heights: this.panelHeights || {}
       };
       // Storage can be disabled or full; the chart must keep working without it.
       try { localStorage.setItem(HistoricalPriceChart.storageKey, JSON.stringify(state)); } catch (error) { /* ignore */ }
@@ -871,9 +871,10 @@ class HistoricalPriceChart {
     return { items, rows: entries.length ? row + 1 : 0 };
   }
 
-  // Sizes of the chart and the vertical position of every panel. The whole chart
-  // fits the window; the price panel and the indicator panels share the height by
-  // their weights (changed by dragging the space between two panels).
+  // Sizes of the chart and the vertical position of every panel. By default the whole
+  // chart fits the window: the price panel takes 3 parts, every indicator panel 1.
+  // A panel whose height was set by dragging the line under it keeps that height;
+  // the panels below simply move down (the chart grows) or up.
   layoutGeometry(series, legends) {
     const { macd, macdh, roc, rsi, stoch } = series.enabled;
     const minwidth = 300, padding = 10, rowHeight = 14, gap = 10, bottomSpace = 30;
@@ -898,11 +899,12 @@ class HistoricalPriceChart {
     const vh = window.innerHeight;
     const total = Math.min(vh - 24, vh * (0.6 + 0.12 * keys.length));
     const fixed = margin.top + keys.reduce((sum, key) => sum + gap + header(key), 0) + padding + bottomSpace;
-    const weights = this.panelWeights || {};
-    const weight = key => Number.isFinite(weights[key]) && weights[key] > 0 ? weights[key] : (key === 'price' ? 3 : 1);
-    const totalWeight = weight('price') + keys.reduce((sum, key) => sum + weight(key), 0);
+    const weight = key => key === 'price' ? 3 : 1;
+    const totalWeight = weight('price') + keys.length;
     const free = Math.max(0, total - fixed);
-    const plot = key => Math.max(key === 'price' ? minPrice : minPanel, Math.round(free * weight(key) / totalWeight));
+    const heights = this.panelHeights || {};
+    const plot = key => Math.max(key === 'price' ? minPrice : minPanel,
+      Number.isFinite(heights[key]) && heights[key] > 0 ? Math.round(heights[key]) : Math.round(free * weight(key) / totalWeight));
     const priceBottom = margin.top + plot('price');
     const height = priceBottom + padding;
     const panels = [];
@@ -1554,24 +1556,26 @@ class HistoricalPriceChart {
     return updateSignals;
   }
 
-  // The space between two panels can be dragged to change their heights; double-click
-  // gives every panel its default height again. Heights are kept as weights.
+  // The line under every panel (also under the last one, above the dates) can be
+  // dragged: only that panel changes height, the panels below move with it.
+  // Double-click gives every panel its default height again.
   drawPanelDividers(ctx) {
     const chart = this;
-    const { svg, panels, margin, height, padding, plotLeft, plotRight, minPrice, minPanel } = ctx;
-    if (!panels.length) return;
+    const { svg, panels, margin, height, padding, plotLeft, plotRight, minPrice, minPanel, dateY } = ctx;
     const areas = [{ key: 'price', top: margin.top, bottom: height - padding }, ...panels];
-    const size = area => area.bottom - area.top;
     const layer = svg.append('g').attr('class', 'panel-dividers');
     const guide = layer.append('line').attr('class', 'panel-divider-guide')
       .attr('x1', plotLeft).attr('x2', plotRight).attr('display', 'none');
-    areas.slice(1).forEach((lower, i) => {
-      const upper = areas[i];
-      const min = area => area.key === 'price' ? minPrice : minPanel;
+    areas.forEach((area, i) => {
+      // From the bottom of this panel to the top of the next one (its legend included),
+      // or to the date axis under the last panel.
+      const next = areas[i + 1];
+      const below = next ? next.headerTop ?? next.top : dateY;
+      const minimum = area.key === 'price' ? minPrice : minPanel;
       let drag = null;
       layer.append('rect').attr('class', 'panel-divider')
         .attr('x', plotLeft).attr('width', plotRight - plotLeft)
-        .attr('y', upper.bottom).attr('height', Math.max(6, lower.top - upper.bottom))
+        .attr('y', area.bottom).attr('height', Math.max(8, below - area.bottom))
         .attr('fill', 'transparent').style('touch-action', 'none')
         .on('pointerdown.divider', function (event) {
           if (event.button !== 0) return;
@@ -1584,8 +1588,8 @@ class HistoricalPriceChart {
           if (!drag || drag.pointerId !== event.pointerId) return;
           // Screen pixels to chart units (the SVG is scaled to the article width).
           const scale = svg.node().viewBox.baseVal.width / svg.node().getBoundingClientRect().width || 1;
-          drag.delta = Math.max(min(upper) - size(upper), Math.min(size(lower) - min(lower), (event.clientY - drag.y) * scale));
-          guide.attr('display', null).attr('y1', upper.bottom + drag.delta).attr('y2', upper.bottom + drag.delta);
+          drag.delta = Math.max(minimum - (area.bottom - area.top), (event.clientY - drag.y) * scale);
+          guide.attr('display', null).attr('y1', area.bottom + drag.delta).attr('y2', area.bottom + drag.delta);
         })
         .on('pointerup.divider pointercancel.divider', event => {
           if (!drag || drag.pointerId !== event.pointerId) return;
@@ -1593,18 +1597,14 @@ class HistoricalPriceChart {
           drag = null;
           guide.attr('display', 'none');
           if (event.type === 'pointercancel' || Math.abs(delta) < 1) return;
-          // Current heights become the weights, with the two neighbours changed.
-          const weights = Object.fromEntries(areas.map(area => [area.key, size(area)]));
-          weights[upper.key] += delta;
-          weights[lower.key] -= delta;
-          chart.panelWeights = { ...chart.panelWeights, ...weights };
+          chart.panelHeights = { ...chart.panelHeights, [area.key]: Math.round(area.bottom - area.top + delta) };
           chart.saveState();
           chart.render();
         })
         .on('mousedown.divider touchstart.divider click.divider', event => event.stopPropagation())
         .on('dblclick.divider', event => {
           event.preventDefault(); event.stopPropagation();
-          chart.panelWeights = {};
+          chart.panelHeights = {};
           chart.saveState();
           chart.render();
         });
