@@ -38,6 +38,7 @@
 		--idata-border-color: #ff9f9f;
 		--grid-color: #ececec;
 		--level-color: #b07a1e;
+		--fib-color: #7a5fc0;
 	}
 }
 
@@ -69,6 +70,7 @@
 		--idata-border-color: #300;
 		--grid-color: #111a2b;
 		--level-color: #c9a227;
+		--fib-color: #a58be0;
 	}
 
 	::-webkit-calendar-picker-indicator {
@@ -538,6 +540,24 @@ svg.panning * {
 
 .level-label {
 	fill: var(--level-color);
+}
+
+/* Fibonacci retracement levels (automatic and drawn) */
+.fib-line {
+	stroke: var(--fib-color);
+	stroke-width: 0.75;
+	stroke-dasharray: 3 3;
+	opacity: 0.8;
+}
+
+.fib-level:first-child .fib-line,
+.fib-level:last-child .fib-line {
+	stroke-dasharray: none;
+}
+
+.fib-label {
+	fill: var(--fib-color);
+	font-size: 1rem !important;
 }
 
 

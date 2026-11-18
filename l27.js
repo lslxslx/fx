@@ -9,6 +9,10 @@
 const formatFxNumber = (value, grouped = true) => Number.isFinite(value)
   ? d3.format(grouped ? ',.2f' : '.2f')(value) : '—';
 
+// Fibonacci retracement ratios: 0% sits on the latest extreme, 100% on the other one.
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+const fibLabel = (ratio, price) => (ratio * 100).toFixed(1).replace(/\.0$/, '') + '% ' + formatFxNumber(price);
+
 // Data store: reads ./data/*.json (GitHub Pages, no backend) and answers the same
 // queries as the server's q / cq endpoints. Does not intercept global fetch.
 window.ForexData = (() => {
@@ -316,6 +320,8 @@ class HistoricalPriceChart {
     this.listen(document, 'pointerdown', event => {
       if (!this.container.contains(event.target)) this.hideCrosshair?.();
     });
+    // A change made just before leaving (or reloading) the page is not lost.
+    this.listen(window, 'pagehide', () => this.saveState(true));
     this.listen(window, 'keydown', event => {
       // Delete / Backspace removes the selected trend line (selected by clicking it,
       // drawing it or moving one of its ends). Never while typing in a field.
@@ -376,7 +382,7 @@ class HistoricalPriceChart {
       RS: Math.trunc(number('rsi_values',14)), ST: Math.trunc(number('stoch_values',14,2)),
       bband:checked('bband'), macd:checked('macd'),
       macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi'),
-      stoch:checked('stoch'), signals:checked('signals'),
+      stoch:checked('stoch'), signals:checked('signals'), fib:checked('fib'),
       // Without the button in the page the crosshair simply stays on.
       cross: document.getElementById('crosshair') ? checked('crosshair') : true
     });
@@ -415,6 +421,7 @@ class HistoricalPriceChart {
       this.trendLines = saved.trendLines
         .filter(trend => trend && typeof trend.currency === 'string' && typeof trend.interval === 'string' && point(trend.start) && point(trend.end))
         .map(trend => ({ id: ++this.nextTrendId, currency: trend.currency, interval: trend.interval,
+          ...(trend.kind === 'fib' ? { kind: 'fib' } : {}),
           start: { date: trend.start.date, price: trend.start.price }, end: { date: trend.end.date, price: trend.end.price } }));
     }
     if (Array.isArray(saved.levels)) {
@@ -423,10 +430,11 @@ class HistoricalPriceChart {
     }
   }
 
-  saveState() {
+  // Saved shortly after the last change; immediately when the page is left.
+  saveState(immediate = false) {
     if (this.destroyed) return;
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
+    const save = () => {
       const node = id => document.getElementById(id);
       const state = {
         currency: document.querySelector('input[name=currency]:checked')?.value,
@@ -434,12 +442,13 @@ class HistoricalPriceChart {
         ix: node('ix')?.value, order: this.oscillatorOrder,
         text: Object.fromEntries(HistoricalPriceChart.textControls.filter(node).map(id => [id, node(id).value])),
         checked: Object.fromEntries(HistoricalPriceChart.checkControls.filter(node).map(id => [id, node(id).checked])),
-        trendLines: this.trendLines.map(({ currency, interval, start, end }) => ({ currency, interval, start, end })),
+        trendLines: this.trendLines.map(({ currency, interval, kind, start, end }) => ({ currency, interval, ...(kind ? { kind } : {}), start, end })),
         levels: this.levels.map(({ currency, price }) => ({ currency, price }))
       };
       // Storage can be disabled or full; the chart must keep working without it.
       try { localStorage.setItem(HistoricalPriceChart.storageKey, JSON.stringify(state)); } catch (error) { /* ignore */ }
-    }, 250);
+    };
+    if (immediate) save(); else this.saveTimer = setTimeout(save, 250);
   }
 
   // ===== Data loading ==========================================================
@@ -992,6 +1001,9 @@ class HistoricalPriceChart {
         .attr('d', bandArea());
     }
 
+    // Automatic Fibonacci retracement of the visible part of the chart.
+    const updateFib = this.drawAutoFibonacci(ctx);
+
     svg.append('g')
       .attr('fill', 'none')
       .attr('class', 'dline')
@@ -1045,7 +1057,45 @@ class HistoricalPriceChart {
         svg.select('.dline').selectAll('path').attr('d', line);
         svg.select('.abbc').selectAll('path').attr('d', bandArea());
       },
-      updateOverlay: () => { drawGrid(); updateLastPrice(); }
+      updateOverlay: () => { drawGrid(); updateLastPrice(); updateFib(); }
+    };
+  }
+
+  // Automatic Fibonacci retracement (button "Fib"): from the highest and lowest close
+  // in the visible range; 0% on whichever came last. Redrawn on zoom and pan.
+  drawAutoFibonacci(ctx) {
+    const { svg, x, y, vdata, plotLeft, plotRight, datalength, config } = ctx;
+    if (!config.fib) return () => {};
+    const layer = svg.append('g').attr('class', 'fib-auto')
+      .attr('clip-path', `url(#${this.priceClipId})`).attr('pointer-events', 'none');
+    return () => {
+      const range = x.range(), last = datalength - 1;
+      let low = 0, high = last;
+      if (last > 0) {
+        const step = (range[1] - range[0]) / last;
+        const a = (plotLeft - range[0]) / step, b = (plotRight - range[0]) / step;
+        low = Math.max(0, Math.ceil(Math.min(a, b) - 1e-9));
+        high = Math.min(last, Math.floor(Math.max(a, b) + 1e-9));
+      }
+      let iMax = -1, iMin = -1;
+      for (let i = low; i <= high; i++) {
+        if (!Number.isFinite(vdata[i])) continue;
+        if (iMax < 0 || vdata[i] > vdata[iMax]) iMax = i;
+        if (iMin < 0 || vdata[i] < vdata[iMin]) iMin = i;
+      }
+      // Index 0 is the newest point: a smaller index came later.
+      const levels = iMax < 0 || vdata[iMax] === vdata[iMin] ? [] : FIB_LEVELS.map(ratio => {
+        const top = vdata[iMax], bottom = vdata[iMin];
+        return { ratio, price: iMax < iMin ? top - (top - bottom) * ratio : bottom + (top - bottom) * ratio };
+      });
+      const rows = layer.selectAll('g.fib-level').data(levels, level => level.ratio).join(enter => {
+        const row = enter.append('g').attr('class', 'fib-level');
+        row.append('line').attr('class', 'fib-line');
+        row.append('text').attr('class', 'fib-label').attr('text-anchor', 'end').attr('dy', -3);
+        return row;
+      }).attr('transform', level => 'translate(0,' + y(level.price) + ')');
+      rows.select('line').attr('x1', plotLeft).attr('x2', plotRight);
+      rows.select('text').attr('x', plotRight - 4).text(level => fibLabel(level.ratio, level.price));
     };
   }
 
@@ -1777,6 +1827,26 @@ class HistoricalPriceChart {
           event.preventDefault(); event.stopPropagation();
           chart.selectedTrendId = trend.id; redraw();
         });
+      // Drawn Fibonacci: levels from the first point to the right edge; 0% at the
+      // second point, 100% at the first. Selected, moved and deleted like a line.
+      const fibs = svg.select('.trendlines').selectAll('g.fib-drawn')
+        .data(lines.filter(trend => trend.kind === 'fib'), trend => trend.id)
+        .join(enter => enter.insert('g', ':first-child').attr('class', 'fib-drawn').attr('pointer-events', 'none'));
+      fibs.each(function (trend) {
+        const [[x1], [x2]] = chart.projectTrend(trend, x, y);
+        const left = Math.min(x1, x2), from = trend.end.price, span = trend.end.price - trend.start.price;
+        const rows = d3.select(this).selectAll('g.fib-level').data(FIB_LEVELS).join(enter => {
+          const row = enter.append('g').attr('class', 'fib-level');
+          row.append('line').attr('class', 'fib-line');
+          row.append('text').attr('class', 'fib-label').attr('dy', -3);
+          return row;
+        }).attr('transform', ratio => 'translate(0,' + y(from - span * ratio) + ')');
+        rows.select('line').attr('x1', left).attr('x2', bounds.right);
+        rows.select('text').attr('x', left + 4).text(ratio => fibLabel(ratio, from - span * ratio));
+      });
+      svg.select('.trendlines').selectAll('path.trend')
+        .attr('stroke-dasharray', trend => trend.kind === 'fib' ? '4 3' : null)
+        .attr('stroke-width', trend => trend.kind === 'fib' ? 1 : 2);
       const selected = chart.drawingTrend ? null : lines.find(trend => trend.id === chart.selectedTrendId);
       const data = selected ? ['start','end'].map(key => ({ trend: selected, key })) : [];
       const handles = svg.select('.trend-handles').selectAll('g.trend-handle')
@@ -1823,7 +1893,9 @@ class HistoricalPriceChart {
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
       if (!point) return;
       event.preventDefault();
-      chart.trendDraft = { id: ++chart.nextTrendId, currency, interval, start: point, end: { ...point } };
+      // Alt (Option) + secondary click draws a Fibonacci retracement instead of a line.
+      chart.trendDraft = { id: ++chart.nextTrendId, currency, interval, ...(event.altKey ? { kind: 'fib' } : {}),
+        start: point, end: { ...point } };
       chart.selectedTrendId = null;
       chart.drawingTrend = true;
       redraw();
@@ -1833,7 +1905,7 @@ class HistoricalPriceChart {
       const point = chart.trendPoint(px, py, dates, x, y, bounds, true);
       if (point) { chart.trendDraft.end = point; redraw(); }
     }).on('click.trends', event => {
-      if (chart.state.loading || chart.trendEdit || event.altKey) return;
+      if (chart.state.loading || chart.trendEdit || (event.altKey && !chart.trendDraft)) return;
       if (!chart.trendDraft) {
         if (event.shiftKey) {
           const [lx, ly] = d3.pointer(event, svg.node());
@@ -2026,7 +2098,7 @@ class HistoricalPriceChart {
 // Saved settings (localStorage) and the controls they cover.
 HistoricalPriceChart.storageKey = 'fxchart.v1';
 HistoricalPriceChart.textControls = ['ma_a','ma_b','ma_c','ma_d','bb_N','bb_K','macd_fast','macd_slow','macd_signal','roc_values','rsi_values','stoch_values'];
-HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals','crosshair'];
+HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals','crosshair','fib'];
 
 // ===== Start-up ================================================================
 window.HistoricalPriceChart = HistoricalPriceChart;

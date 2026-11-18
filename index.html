@@ -118,7 +118,11 @@
                     <br>
                     Use the secondary click to draw a (trend) line. Click a line to select it (drag its ends to move them); press Delete or Backspace to delete the selected line.
                     <br>
-                    Hold down the shift key and click to add a horizontal (support / resistance) level. To delete, hold down the alt key and click on it.
+                    Fib: Fibonacci retracement (0, 23.6, 38.2, 50, 61.8, 78.6 and 100%) between the highest and the lowest close of the visible part of the chart; 0% is on whichever came last.
+                    <br>
+                    Hold down the alt key (option on mac) and use the secondary click to draw a Fibonacci retracement between two points (0% at the second point); select, move and delete it like a trend line.
+                    <br>
+Hold down the shift key and click to add a horizontal (support / resistance) level. To delete, hold down the alt key and click on it.
                     <br>
                     Crosshair: shows the date and the value on the axes. With touch, one finger moves it (the page does not scroll over the chart while it is on); two fingers move and zoom the chart. Zoom with Ctrl / Cmd + wheel.
                     <br>
@@ -135,6 +139,8 @@
                     <input type="text" maxlength="4" id="ma_b" placeholder="MA" title="Moving average">
                     <input type="text" maxlength="4" id="ma_c" placeholder="MA" title="Moving average">
                     <input type="text" maxlength="4" id="ma_d" placeholder="MA" title="Moving average">
+                    <input type="checkbox" id="fib">
+                    <label for="fib" title="Fibonacci retracement of the visible range">Fib</label>
                 </div>
                 <div id="indicators" data-long="Indicators">
                     <input type="checkbox" id="macd">
