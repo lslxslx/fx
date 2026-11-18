@@ -254,6 +254,8 @@ class HistoricalPriceChart {
     this.nextTrendId = 0;
     this.trendDraft = null;
     this.selectedTrendId = null;
+    this.selectedLevelId = null; // selected horizontal level
+    this.levelDrag = null;
     this.trendEdit = null;
     this.destroyed = false;
     // The crosshair starts switched on; a saved choice overrides this.
@@ -324,19 +326,23 @@ class HistoricalPriceChart {
     this.listen(window, 'pagehide', () => this.saveState(true));
     this.listen(window, 'keydown', event => {
       // Delete / Backspace removes the selected trend line (selected by clicking it,
-      // drawing it or moving one of its ends). Never while typing in a field.
-      if ((event.key === 'Delete' || event.key === 'Backspace') && this.selectedTrendId !== null &&
+      // drawing it or moving one of its ends) or the selected horizontal level.
+      // Never while typing in a field.
+      if ((event.key === 'Delete' || event.key === 'Backspace') &&
+          (this.selectedTrendId !== null || this.selectedLevelId !== null) && !this.levelDrag &&
           !this.trendEdit && !this.trendDraft && !event.target.closest?.('input, textarea, select, [contenteditable]')) {
         event.preventDefault();
         this.trendLines = this.trendLines.filter(item => item.id !== this.selectedTrendId);
+        this.levels = this.levels.filter(item => item.id !== this.selectedLevelId);
         this.selectedTrendId = null;
+        this.selectedLevelId = null;
         this.updateTrendLines?.();
         return;
       }
       if (event.key !== 'Escape') return;
       if (this.trendEdit) this.finishTrendEdit(false);
       else if (this.trendDraft) this.cancelTrendDraft();
-      else { this.selectedTrendId = null; this.updateTrendLines?.(); }
+      else { this.selectedTrendId = null; this.selectedLevelId = null; this.updateTrendLines?.(); }
     });
   }
 
@@ -1584,7 +1590,7 @@ class HistoricalPriceChart {
       .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
         (!event.button || event.type === 'wheel') &&
         (event.type !== 'wheel' || event.ctrlKey || event.metaKey) &&
-        !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
+        !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker, .level-hit') &&
         (event.type !== 'touchstart' || event.touches.length >= 2) && (() => {
           const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
           return points.every(([px, py]) => px >= plotLeft && px <= plotRight &&
@@ -1650,7 +1656,7 @@ class HistoricalPriceChart {
       if (!touch) return;
       clearTimeout(touch.timer); release(touch.id); touch = null; chart.touchInspect = false;
     };
-    const blocked = event => event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle');
+    const blocked = event => event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle, .level-hit');
     this.hideCrosshair = hide;
     svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
       chart.pointerType = event.pointerType;
@@ -1820,12 +1826,12 @@ class HistoricalPriceChart {
         .on('click.trends', (event, trend) => {
           if (chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
           event.stopPropagation();
-          chart.selectedTrendId = trend.id; // Delete / Backspace removes it (bindControls)
+          chart.selectedTrendId = trend.id; chart.selectedLevelId = null; // Delete / Backspace removes it
           redraw();
         }).on('keydown.trends', (event, trend) => {
           if (!['Enter', ' '].includes(event.key) || chart.drawingTrend || chart.trendEdit || chart.state.loading) return;
           event.preventDefault(); event.stopPropagation();
-          chart.selectedTrendId = trend.id; redraw();
+          chart.selectedTrendId = trend.id; chart.selectedLevelId = null; redraw();
         });
       // Drawn Fibonacci: levels from the first point to the right edge; 0% at the
       // second point, 100% at the first. Selected, moved and deleted like a line.
@@ -1863,26 +1869,56 @@ class HistoricalPriceChart {
           return px >= bounds.left && px <= bounds.right && py >= bounds.top && py <= bounds.bottom ? null : 'none';
         });
       chart.bindTrendHandles(handles, svg, dates, x, y, bounds);
-      // Horizontal levels: Shift+click adds one, Alt+click removes it.
+      // Horizontal levels: Shift+click adds one. Click selects it (drawn thicker),
+      // dragging moves it up or down only, Delete / Backspace removes it.
       const levels = svg.select('.levels').selectAll('g.level')
         .data(chart.levels.filter(level => level.currency === currency), level => level.id).join(enter => {
           const group = enter.append('g').attr('class', 'level');
           group.append('line').attr('class', 'level-line');
           group.append('line').attr('class', 'level-hit').attr('stroke', 'transparent')
-            .attr('stroke-width', 14).attr('pointer-events', 'stroke').style('cursor', 'pointer');
+            .attr('stroke-width', 14).attr('pointer-events', 'stroke')
+            .attr('tabindex', 0).attr('role', 'button')
+            .style('cursor', 'ns-resize').style('touch-action', 'none');
           group.append('text').attr('class', 'level-label').attr('text-anchor', 'end').attr('dy', -4);
           return group;
-        }).attr('transform', level => `translate(0,${y(level.price)})`)
+        }).classed('selected', level => level.id === chart.selectedLevelId)
+        .attr('transform', level => `translate(0,${y(level.price)})`)
         .attr('display', level => y(level.price) >= bounds.top && y(level.price) <= bounds.bottom ? null : 'none');
       levels.selectAll('line').attr('x1', bounds.left).attr('x2', bounds.right);
       levels.select('.level-label').attr('x', bounds.right - 4).text(level => formatFxNumber(level.price));
-      levels.select('.level-hit').on('click.levels', (event, level) => {
-        if (!event.altKey || chart.state.loading) return;
-        event.stopPropagation();
-        chart.levels = chart.levels.filter(item => item.id !== level.id);
-        redraw();
-      }).select('title').remove();
-      levels.select('.level-hit').append('title').text('Alt+click to remove');
+      const moveLevel = (level, py) => {
+        const price = y.invert(Math.max(bounds.top, Math.min(bounds.bottom, py)));
+        if (Number.isFinite(price)) { level.price = Math.round(price * 100) / 100; redraw(); }
+      };
+      levels.select('.level-hit')
+        .attr('aria-label', level => 'Niveli ' + formatFxNumber(level.price) + '. Lëvize me shigjetat lart / poshtë, fshije me Delete.')
+        .on('pointerdown.levels', function (event, level) {
+          event.stopPropagation();
+          if (event.button !== 0 || chart.state.loading || chart.drawingTrend || chart.trendEdit) return;
+          event.preventDefault();
+          chart.selectedLevelId = level.id; chart.selectedTrendId = null;
+          chart.levelDrag = { id: level.id, pointerId: event.pointerId };
+          this.setPointerCapture?.(event.pointerId);
+          this.focus?.({ preventScroll: true });
+          redraw();
+        })
+        .on('pointermove.levels', (event, level) => {
+          if (chart.levelDrag?.id !== level.id || chart.levelDrag.pointerId !== event.pointerId) return;
+          event.preventDefault(); event.stopPropagation();
+          moveLevel(level, d3.pointer(event, svg.node())[1]);
+        })
+        .on('pointerup.levels pointercancel.levels lostpointercapture.levels', (event, level) => {
+          if (chart.levelDrag?.id !== level.id) return;
+          chart.levelDrag = null;
+          redraw();
+        })
+        .on('mousedown.levels touchstart.levels click.levels dblclick.levels', event => event.stopPropagation())
+        .on('keydown.levels', (event, level) => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+          event.preventDefault(); event.stopPropagation();
+          chart.selectedLevelId = level.id; chart.selectedTrendId = null;
+          moveLevel(level, y(level.price) + (event.key === 'ArrowDown' ? 1 : -1) * (event.shiftKey ? 10 : 1));
+        });
       chart.saveState();
     };
     this.updateTrendLines = redraw;
@@ -1896,7 +1932,7 @@ class HistoricalPriceChart {
       // Alt (Option) + secondary click draws a Fibonacci retracement instead of a line.
       chart.trendDraft = { id: ++chart.nextTrendId, currency, interval, ...(event.altKey ? { kind: 'fib' } : {}),
         start: point, end: { ...point } };
-      chart.selectedTrendId = null;
+      chart.selectedTrendId = null; chart.selectedLevelId = null;
       chart.drawingTrend = true;
       redraw();
     }).on('mousemove.trends', event => {
@@ -1912,14 +1948,14 @@ class HistoricalPriceChart {
           const level = chart.trendPoint(lx, ly, dates, x, y, bounds);
           if (level) chart.levels.push({ id: ++chart.nextTrendId, currency, price: Math.round(level.price * 100) / 100 });
         }
-        chart.selectedTrendId = null; redraw(); return;
+        chart.selectedTrendId = null; chart.selectedLevelId = null; redraw(); return;
       }
       const [px, py] = d3.pointer(event, svg.node());
       const point = chart.trendPoint(px, py, dates, x, y, bounds);
       if (!point) return;
       chart.trendDraft.end = point;
       chart.trendLines.push(chart.trendDraft);
-      chart.selectedTrendId = chart.trendDraft.id;
+      chart.selectedTrendId = chart.trendDraft.id; chart.selectedLevelId = null;
       chart.trendDraft = null;
       chart.drawingTrend = false;
       redraw();

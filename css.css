@@ -542,6 +542,16 @@ svg.panning * {
 	fill: var(--level-color);
 }
 
+/* selected level: thicker and solid; drag it up or down, Delete removes it */
+.level.selected .level-line {
+	stroke-width: 2;
+	stroke-dasharray: none;
+}
+
+.level.selected .level-label {
+	font-weight: 600;
+}
+
 /* Fibonacci retracement levels (automatic and drawn) */
 .fib-line {
 	stroke: var(--fib-color);
