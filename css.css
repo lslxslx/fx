@@ -514,7 +514,7 @@ svg.crosshair-on .rsrcgrid {
 	cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Ccircle cx='4.5' cy='4.5' r='2.5' fill='%2338678f' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E") 4 4, default;
 }
 
-/* dragging the chart */
+/* dragging the chart or a horizontal level */
 svg.panning,
 svg.panning * {
 	cursor: grabbing !important;
@@ -547,11 +547,6 @@ svg.panning * {
 article svg [tabindex]:focus,
 article svg [tabindex]:focus-visible {
 	outline: none;
-}
-
-/* the hand stays while a level is dragged */
-.level-hit:active {
-	cursor: pointer;
 }
 
 /* selected level: thicker and solid; drag it up or down, Delete removes it */

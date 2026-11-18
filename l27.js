@@ -1898,6 +1898,7 @@ class HistoricalPriceChart {
           event.preventDefault();
           chart.selectedLevelId = level.id; chart.selectedTrendId = null;
           chart.levelDrag = { id: level.id, pointerId: event.pointerId };
+          svg.classed('panning', true); // same closed hand as when the chart is dragged
           this.setPointerCapture?.(event.pointerId);
           this.focus?.({ preventScroll: true });
           redraw();
@@ -1910,6 +1911,7 @@ class HistoricalPriceChart {
         .on('pointerup.levels pointercancel.levels lostpointercapture.levels', (event, level) => {
           if (chart.levelDrag?.id !== level.id) return;
           chart.levelDrag = null;
+          svg.classed('panning', false);
           redraw();
         })
         .on('mousedown.levels touchstart.levels click.levels dblclick.levels', event => event.stopPropagation())
