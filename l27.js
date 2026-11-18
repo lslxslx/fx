@@ -1,12 +1,16 @@
+// Technical analysis chart (d3 v7). Files read from ./data/:
+//   eur.json, usd.json, ...  daily official rates, one file per currency
+//   events.json              optional info markers: date (YYYY-MM-DD), currency
+//                            (EUR, USD, ... or '*'), title and description; [] = none
+// Parts of this file, in order: number formatting, ForexData (data store),
+// Indicators (formulas), HistoricalPriceChart (the chart), start-up.
+
 // Display formatting only; historical values and indicator calculations stay numeric.
 const formatFxNumber = (value, grouped = true) => Number.isFinite(value)
   ? d3.format(grouped ? ',.2f' : '.2f')(value) : '—';
 
-// GitHub Pages adaptation: JSON files in ./data/, no backend required.
-// Info events are loaded from ./data/events.json. Each item contains date
-// (YYYY-MM-DD), currency (EUR, USD, ... or '*'), title and description.
-// An empty JSON array [] means no markers. No embedded or sample events.
-/* Local replacement for q/cq. Does not intercept global fetch. */
+// Data store: reads ./data/*.json (GitHub Pages, no backend) and answers the same
+// queries as the server's q / cq endpoints. Does not intercept global fetch.
 window.ForexData = (() => {
   const codes = ['EUR','USD','GBP','CHF','XAU','XAG','JPY','AUD','CAD'];
   const cache = new Map();
@@ -105,39 +109,39 @@ const Indicators = {
   },
   EMA(data, range) {
     if (data.length < range) {
-        console.log("EMA: Range greater than array length.");
-        return [];
+      console.log("EMA: Range greater than array length.");
+      return [];
     }
     // Seed with the simple average of the first period, then smooth forward.
     let k = 2 / (range + 1),
-        num = Indicators.average(data.slice(0, range)),
-        e = [num];
+      num = Indicators.average(data.slice(0, range)),
+      e = [num];
     for (let i = range; i < data.length; i++) {
-        num = (k * Number(data[i])) + ((1 - k) * num);
-        e.push(num);
+      num = (k * Number(data[i])) + ((1 - k) * num);
+      e.push(num);
     }
     return e;
   },
   SMA(data, range) {
     if (data.length < range) {
-        console.log("SMA: Range greater than array length.");
-        return [];
+      console.log("SMA: Range greater than array length.");
+      return [];
     }
     const s = [];
     let sum = 0;
     for (let i = 0; i < data.length; i++) {
-        sum += data[i];
-        if (i >= range) sum -= data[i - range];
-        if (i >= range - 1) s.push(sum / range);
+      sum += data[i];
+      if (i >= range) sum -= data[i - range];
+      if (i >= range - 1) s.push(sum / range);
     }
     return s;
   },
   DEMA(data, range) {
     let firstEma = Indicators.EMA(data, range),
-        secondEma = Indicators.EMA(firstEma, range);
+      secondEma = Indicators.EMA(firstEma, range);
     if (!secondEma.length) {
-        console.log("DEMA: Range greater than array length.");
-        return [];
+      console.log("DEMA: Range greater than array length.");
+      return [];
     }
     // The second EMA starts later: align both series at their latest value.
     const lag = firstEma.length - secondEma.length;
@@ -145,50 +149,50 @@ const Indicators = {
   },
   MACD(data, eshort, elong, esignal) {
     let emashort = Indicators.EMA(data, eshort),
-        emalong = Indicators.EMA(data, elong),
-        // The two averages have different warm-up lengths; align them at the end.
-        n = Math.min(emashort.length, emalong.length),
-        macdline = Array.from({ length: n }, (_x, i) =>
-            emashort[emashort.length - n + i] - emalong[emalong.length - n + i]),
-        macdsignal = Indicators.EMA(macdline, esignal),
-        lag = macdline.length - macdsignal.length,
-        macdhist = macdsignal.map((x, i) => macdline[i + lag] - x);
+      emalong = Indicators.EMA(data, elong),
+      // The two averages have different warm-up lengths; align them at the end.
+      n = Math.min(emashort.length, emalong.length),
+      macdline = Array.from({ length: n }, (_x, i) =>
+        emashort[emashort.length - n + i] - emalong[emalong.length - n + i]),
+      macdsignal = Indicators.EMA(macdline, esignal),
+      lag = macdline.length - macdsignal.length,
+      macdhist = macdsignal.map((x, i) => macdline[i + lag] - x);
     return [{ macdline: macdline, macdsignal: macdsignal, macdhist: macdhist }];
   },
   ROC(data, N) {
     let roc = [];
     if (data.length <= N) {
-        console.log("ROC: Range greater than array length.");
-        return [];
+      console.log("ROC: Range greater than array length.");
+      return [];
     }
     for (let i = N; i < data.length; i++) {
-        roc.push({ roc: ((data[i] - data[i - N]) / data[i - N]) * 100 });
+      roc.push({ roc: ((data[i] - data[i - N]) / data[i - N]) * 100 });
     }
     return roc;
   },
   RSI(data, N) {
     let avg = 0,
-        avl = 0,
-        rsi = [];
+      avl = 0,
+      rsi = [];
     if (data.length <= N) {
-        console.log("RSI: Range greater than array length.");
-        return [];
+      console.log("RSI: Range greater than array length.");
+      return [];
     }
     const value = () => avl === 0 ? (avg === 0 ? 50 : 100) : 100 - (100 / (1 + avg / avl));
     // first "N" changes: simple average of gains and losses
     for (let i = 1; i <= N; i++) {
-        const change = data[i] - data[i - 1];
-        if (change > 0) avg += change; else avl -= change;
+      const change = data[i] - data[i - 1];
+      if (change > 0) avg += change; else avl -= change;
     }
     avg /= N;
     avl /= N;
     rsi.push({ rsi: value() });
     // the rest: Wilder smoothing (an unchanged price still decays both averages)
     for (let i = N + 1; i < data.length; i++) {
-        const change = data[i] - data[i - 1];
-        avg = (avg * (N - 1) + Math.max(change, 0)) / N;
-        avl = (avl * (N - 1) + Math.max(-change, 0)) / N;
-        rsi.push({ rsi: value() });
+      const change = data[i] - data[i - 1];
+      avg = (avg * (N - 1) + Math.max(change, 0)) / N;
+      avl = (avl * (N - 1) + Math.max(-change, 0)) / N;
+      rsi.push({ rsi: value() });
     }
     return rsi;
   },
@@ -197,34 +201,35 @@ const Indicators = {
   STOCH(data, N, smooth = 3) {
     const k = [];
     for (let i = N - 1; i < data.length; i++) {
-        let low = Infinity, high = -Infinity;
-        for (let j = i - N + 1; j <= i; j++) {
-            if (data[j] < low) low = data[j];
-            if (data[j] > high) high = data[j];
-        }
-        k.push(high > low ? (data[i] - low) / (high - low) * 100 : 50);
+      let low = Infinity, high = -Infinity;
+      for (let j = i - N + 1; j <= i; j++) {
+        if (data[j] < low) low = data[j];
+        if (data[j] > high) high = data[j];
+      }
+      k.push(high > low ? (data[i] - low) / (high - low) * 100 : 50);
     }
     return { k, d: k.length >= smooth ? Indicators.SMA(k, smooth) : [] };
   },
   bollingerband(data, N, K) {
     const bands = [];
     if (N <= 1) {
-        console.log("BB: N period of moving average should be grater than 1.");
-        return [];
+      console.log("BB: N period of moving average should be grater than 1.");
+      return [];
     }
     for (let i = N - 1, n = data.length; i < n; i++) {
-        let slc = data.slice(i + 1 - N, i + 1),
-            m = slc.reduce((a, b) => a + b) / slc.length,
-            s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length);
-        bands.push({ low: m - (s * K), high: m + (s * K) });
+      let slc = data.slice(i + 1 - N, i + 1),
+        m = slc.reduce((a, b) => a + b) / slc.length,
+        s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length);
+      bands.push({ low: m - (s * K), high: m + (s * K) });
     }
     return bands;
   }
 };
 window.FxIndicators = Indicators;
 
-// (C) luislamani — class refactor, phase 1
 class HistoricalPriceChart {
+  // ===== Lifecycle =============================================================
+
   constructor(container = document.querySelector('article')) {
     if (!container) throw new Error('Mungon elementi article i grafikut.');
     this.container = container;
@@ -262,6 +267,117 @@ class HistoricalPriceChart {
     if (!element) return;
     element.addEventListener(event, handler);
     this.listeners.push(() => element.removeEventListener(event, handler));
+  }
+
+  destroy() {
+    this.finishTrendEdit(false, false);
+    this.calculationCache = null;
+    this.destroyed=true; this.state.requestId++;
+    this.infoRequestId++;
+    this.infoAbort?.abort();
+    clearTimeout(this.layoutTimer);
+    clearTimeout(this.saveTimer);
+    this.resizeObserver?.disconnect();
+    this.pointerCleanup?.();
+    this.infoDialog?.close();
+    this.infoDialog?.remove();
+    this.listeners.forEach(remove=>remove()); this.listeners=[];
+    this.svg.on('.zoom', null).on('dblclick.reset', null);
+    this.svg.on('.trends', null).on('.guard', null);
+    this.updateTrendLines = null;
+    this.trendDraft = null;
+    this.drawingTrend = false;
+    this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
+    this.setLoading(false);
+  }
+
+  // ===== Controls, settings and saved state ====================================
+
+  bindControls() {
+    const panel = document.getElementById('cpanel');
+    const select = document.getElementById('ix');
+    this.listen(panel, 'change', event => {
+      const target=event.target;
+      if (target.id==='start' && select) {
+        select.disabled=Boolean(target.value); select.style.textDecoration=target.value?'line-through':'unset';
+      }
+      if (target.matches('input[name=currency], input[name=interval], input[type=date], #ix')) {
+        if (target.name==='interval') this.switchintervalix(target.value,select);
+        this.closemenu(); this.reloadData();
+      } else if (target.matches('#overlays input, #indicators input')) this.refreshIndicators();
+    });
+    this.listen(panel, 'keydown', event => {
+      if(event.key!=='Enter' || event.target.id==='q') return;
+      event.preventDefault(); this.closemenu();
+      if(event.target.matches('#overlays input, #indicators input')) this.refreshIndicators();
+      else this.reloadData();
+    });
+    this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
+    this.listen(document, 'pointerdown', event => {
+      if (!this.container.contains(event.target)) this.hideCrosshair?.();
+    });
+    this.listen(window, 'keydown', event => {
+      if (event.key !== 'Escape') return;
+      if (this.trendEdit) this.finishTrendEdit(false);
+      else if (this.trendDraft) this.cancelTrendDraft();
+      else { this.selectedTrendId = null; this.updateTrendLines?.(); }
+    });
+  }
+
+  closemenu() {
+    const label=document.querySelector('label[for=menu]'), menu=document.getElementById('menu');
+    if(label&&menu&&window.getComputedStyle(label,'::after').content.includes(label.getAttribute('data-abbr'))) menu.checked=false;
+  }
+
+  // Default range when the interval changes: 1 year daily, 5 years weekly,
+  // 20 years monthly, everything quarterly.
+  switchintervalix(v, vix) {
+    const months = { quave: 0, mave: 240, wave: 60, daily: 12 };
+    if (v in months) vix.value = months[v];
+    return vix.value;
+  }
+
+  parameters() {
+    return {
+      c: document.querySelector('input[name=currency]:checked')?.value || 'EUR',
+      fd: document.getElementById('start')?.value || '', td: document.getElementById('end')?.value || '',
+      i: document.querySelector('input[name=interval]:checked')?.value || 'daily',
+      ix: document.getElementById('ix')?.value || '12'
+    };
+  }
+
+  readIndicators() {
+    const value = id => document.getElementById(id)?.value || '';
+    const number = (id, fallback, min = 1) => {
+      const n = Number(value(id));
+      return Number.isFinite(n) && n >= min ? n : fallback;
+    };
+    const checked = id => Boolean(document.getElementById(id)?.checked);
+    const config = {};
+    for (const suffix of ['a','b','c','d']) {
+      const match = value('ma_'+suffix).trim().match(/^([SED])([1-9]\d*)$/i);
+      config['ma_'+suffix] = match ? Number(match[2]) : NaN;
+      config['mma_'+suffix] = match ? match[1].toUpperCase() : null;
+    }
+    Object.assign(config, {
+      N: Math.trunc(number('bb_N',20,2)), K: number('bb_K',2),
+      eshort: Math.trunc(number('macd_fast',8)), elong: Math.trunc(number('macd_slow',17)),
+      esignal: Math.trunc(number('macd_signal',9)), RC: Math.trunc(number('roc_values',12)),
+      RS: Math.trunc(number('rsi_values',14)), ST: Math.trunc(number('stoch_values',14,2)),
+      bband:checked('bband'), macd:checked('macd'),
+      macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi'),
+      stoch:checked('stoch'), signals:checked('signals'),
+      // Without the button in the page the crosshair simply stays on.
+      cross: document.getElementById('crosshair') ? checked('crosshair') : true
+    });
+    this.config = config;
+    // Track selections, not data availability: a short history must not erase
+    // the user's order. Turning an indicator off removes it; turning it back
+    // on appends it after any oscillator that is still selected.
+    this.oscillatorOrder = (this.oscillatorOrder || []).filter(key => config[key]);
+    for (const key of ['roc', 'rsi', 'stoch']) {
+      if (config[key] && !this.oscillatorOrder.includes(key)) this.oscillatorOrder.push(key);
+    }
   }
 
   // Settings, trend lines and levels survive a reload. Custom dates are not
@@ -316,48 +432,7 @@ class HistoricalPriceChart {
     }, 250);
   }
 
-  readIndicators() {
-    const value = id => document.getElementById(id)?.value || '';
-    const number = (id, fallback, min = 1) => {
-      const n = Number(value(id));
-      return Number.isFinite(n) && n >= min ? n : fallback;
-    };
-    const checked = id => Boolean(document.getElementById(id)?.checked);
-    const config = {};
-    for (const suffix of ['a','b','c','d']) {
-      const match = value('ma_'+suffix).trim().match(/^([SED])([1-9]\d*)$/i);
-      config['ma_'+suffix] = match ? Number(match[2]) : NaN;
-      config['mma_'+suffix] = match ? match[1].toUpperCase() : null;
-    }
-    Object.assign(config, {
-      N: Math.trunc(number('bb_N',20,2)), K: number('bb_K',2),
-      eshort: Math.trunc(number('macd_fast',8)), elong: Math.trunc(number('macd_slow',17)),
-      esignal: Math.trunc(number('macd_signal',9)), RC: Math.trunc(number('roc_values',12)),
-      RS: Math.trunc(number('rsi_values',14)), ST: Math.trunc(number('stoch_values',14,2)),
-      bband:checked('bband'), macd:checked('macd'),
-      macdh:checked('macdh'), roc:checked('roc'), rsi:checked('rsi'),
-      stoch:checked('stoch'), signals:checked('signals'),
-      // Without the button in the page the crosshair simply stays on.
-      cross: document.getElementById('crosshair') ? checked('crosshair') : true
-    });
-    this.config = config;
-    // Track selections, not data availability: a short history must not erase
-    // the user's order. Turning an indicator off removes it; turning it back
-    // on appends it after any oscillator that is still selected.
-    this.oscillatorOrder = (this.oscillatorOrder || []).filter(key => config[key]);
-    for (const key of ['roc', 'rsi', 'stoch']) {
-      if (config[key] && !this.oscillatorOrder.includes(key)) this.oscillatorOrder.push(key);
-    }
-  }
-
-  parameters() {
-    return {
-      c: document.querySelector('input[name=currency]:checked')?.value || 'EUR',
-      fd: document.getElementById('start')?.value || '', td: document.getElementById('end')?.value || '',
-      i: document.querySelector('input[name=interval]:checked')?.value || 'daily',
-      ix: document.getElementById('ix')?.value || '12'
-    };
-  }
+  // ===== Data loading ==========================================================
 
   setLoading(loading) {
     this.state.loading = loading;
@@ -395,12 +470,25 @@ class HistoricalPriceChart {
     }
   }
 
+  // Rows from the data store ({ Data, EUR: 90.67 }) to { date, value }.
+  parseData(values, currency) {
+    return Array.from(values, row => ({ date: new Date(row.Data), value: +row[currency] }));
+  }
+
   refreshIndicators() {
     if (this.destroyed) return;
     this.readIndicators();
     this.saveState();
     this.render();
   }
+
+  showError(message) {
+    let node = this.container.querySelector('[data-chart-error]');
+    if (!node) { node=document.createElement('p'); node.dataset.chartError=''; node.setAttribute('role','status'); this.container.appendChild(node); }
+    node.textContent=message;
+  }
+
+  // ===== Indicator series (formulas live in Indicators, above) =================
 
   prepareChartData(values) {
     const cached = this.calculationCache;
@@ -473,6 +561,17 @@ class HistoricalPriceChart {
     };
   }
 
+  // Moving average by its letter: S simple, E exponential, D double exponential.
+  SwMA(v, ldata, rdata) {
+    const average = { S: Indicators.SMA, E: Indicators.EMA, D: Indicators.DEMA }[v.toUpperCase()];
+    return average ? average(ldata, rdata) : null;
+  }
+
+  // Moving average name for the legend.
+  SwMALegend(v) {
+    return { S: 'SMA', E: 'EMA', D: 'DEMA' }[v.toUpperCase()] || null;
+  }
+
   // Indices (newest first) where series a crosses series b. up = a moves above b.
   crossings(a, b) {
     const result = [];
@@ -485,6 +584,8 @@ class HistoricalPriceChart {
     }
     return result;
   }
+
+  // ===== Rendering and layout ==================================================
 
   render() {
     if (this.destroyed) return;
@@ -535,6 +636,1013 @@ class HistoricalPriceChart {
       (transform.x - oldRange[0] * (1 - transform.k)) * ratio;
     return d3.zoomIdentity.translate(tx, 0).scale(transform.k);
   }
+
+  // Drawing. drawChart() builds the layout once and then draws the chart in parts,
+  // in this order (the order of the SVG layers): frame and axes, price panel,
+  // MACD panel, ROC / RSI / Stochastic panels, crosshair, trend lines and levels,
+  // info markers, crossover signals, and finally zoom. Each part returns what the
+  // zoom handler needs to update it.
+  drawChart(values, currency) {
+    this.drawingTrend = Boolean(this.trendDraft);
+    const ctx = this.chartLayout(values, currency);
+    this.drawFrame(ctx);
+    const price = this.drawPricePanel(ctx);
+    const macd = this.drawMacdPanel(ctx);
+    const oscillators = this.drawOscillatorPanels(ctx);
+    const legends = [price.legend, macd.legend, ...oscillators.legends].filter(Boolean);
+    const hidePointer = this.drawCrosshair(ctx, legends);
+    const { svg, ddata, vdata, x, y, plotLeft, plotRight, margin, height, padding, interval } = ctx;
+    const priceBounds = { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding };
+    // draw trendlines
+    svg.append('g').attr('class', 'trend-viewport')
+      .attr('clip-path', `url(#${this.priceClipId})`).append('g')
+      .attr('class', 'trendlines');
+    svg.select('.trend-viewport').insert('g', '.trendlines').attr('class', 'levels');
+    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
+    this.bindTrendLines(svg, ddata, x, y, priceBounds, currency, interval);
+    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y, priceBounds);
+    const updateSignals = this.drawSignals(ctx);
+    this.setupZoom(ctx, {
+      panels: [price.update, macd.update, oscillators.update],
+      afterAxes: [price.updateOverlay, updateSignals, () => this.updateTrendLines(), updateInfoMarkers],
+      hidePointer
+    });
+  }
+
+  // Layout, scales and everything the drawing parts share. Also publishes the
+  // geometry and scales other features read (plotGeometry, panelGeometry, plotScales).
+  chartLayout(values, currency) {
+    const series = this.indicatorSeries(values);
+    const geometry = this.layoutGeometry(series);
+    const time = this.timeScale(series.ddata, geometry);
+    const price = this.priceScale(series, geometry);
+    this.plotGeometry = { x: time.baseRange.slice(), y: price.y.range().slice() };
+    this.panelGeometry = [{ key: 'price', top: geometry.margin.top, bottom: geometry.height - geometry.padding }, ...geometry.panels];
+    const scales = this.indicatorScales(series, geometry);
+    const { macd, macdh, roc, rsi, stoch } = series.enabled;
+    this.plotScales = { x: time.x, y: price.y, ...(macd || macdh ? { macd: scales.yMacd } : {}),
+      ...(roc ? { roc: scales.yRoc } : {}), ...(rsi ? { rsi: scales.yRsi } : {}), ...(stoch ? { stoch: scales.yStoch } : {}) };
+    const interval = this.state.interval;
+    const ctx = {
+      chart: this, svg: this.svg, currency, interval, config: this.config,
+      series, ...series, macd, macdh, roc, rsi, stoch,
+      ...geometry, ...time, ...price, ...scales,
+      colors: this.chartColors(series),
+      intervalTag: interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)')),
+      pointerFormat: value => Number.isFinite(value) ? d3.format(',')(this.roundn(value)) : '—',
+      macdhbinsl: 1500, macdhbinsm: 900
+    };
+    this.addDrawingHelpers(ctx);
+    return ctx;
+  }
+
+  // Sizes of the chart and the vertical position of every panel.
+  layoutGeometry(series) {
+    const { macd, macdh, roc, rsi, stoch } = series.enabled;
+    const minwidth = 300, // screen
+      // Keep the original margin for ordinary FX prices; allow large XAU labels
+      // to show both decimal digits instead of clipping the final character.
+      margin = { top: 30, right: Math.max(60,
+        Math.max(formatFxNumber(series.min).length, formatFxNumber(series.max).length) * 6 + 14), bottom: 60 },
+      width = this.container.offsetWidth - margin.right,
+      // Do not measure content height: it includes panels from the last render.
+      height = Math.max(minwidth, window.innerHeight * 0.55) - margin.top,
+      padding = 10,
+      indicator = { top: height, height: 90 },
+      ibottom = { bottom: indicator.top + indicator.height + padding };
+    // MACD stays first. Only ROC / RSI / Stochastic follow their selection order.
+    const panels = [];
+    let panelTop = indicator.top;
+    const oscillatorPanels = (this.oscillatorOrder || ['roc', 'rsi'])
+      .map(key => [key, { roc, rsi, stoch }[key]]);
+    for (const [key, enabled] of [['macd', macd || macdh], ...oscillatorPanels]) {
+      if (!enabled) continue;
+      panels.push({ key, top: panelTop, bottom: panelTop + indicator.height + padding });
+      panelTop += indicator.height + padding * 2;
+    }
+    const panelByKey = Object.fromEntries(panels.map(panel => [panel.key, panel]));
+    const lowerBottom = panels.length ? panels[panels.length - 1].bottom : height - padding;
+    const dateY = panels.length ? lowerBottom + padding : height;
+    return { minwidth, margin, width, height, padding, indicator, ibottom, panels, panelByKey, lowerBottom, dateY };
+  }
+
+  // Date scale and axis. One position per observation (weekends leave no gaps).
+  timeScale(ddata, { minwidth, margin, width, padding, dateY }) {
+    const chart = this, limdata = 50;
+    let datalength = ddata.length,
+      format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
+      tformat = datalength < limdata ? format.daily : format.monthly;
+    let x = d3.scalePoint()
+      .domain(ddata)
+      .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
+    const baseRange = x.range().slice();
+    this.zoomTransform = this.resizeZoom(baseRange);
+    const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
+    // Invert by observation index, not elapsed time (weekends remain gap-free).
+    x.invert = pixel => {
+      const range = x.range();
+      const index = datalength < 2 ? 0 : Math.round((pixel - range[0]) / (range[1] - range[0]) * (datalength - 1));
+      return ddata[Math.max(0, Math.min(datalength - 1, index))];
+    };
+    function visibleTicks() {
+      const visible = Array.from(ddata).filter(date => x(date) >= plotLeft - 0.5 && x(date) <= plotRight + 0.5);
+      const step = Math.max(1, Math.ceil(visible.length / Math.max(2, Math.floor((plotRight - plotLeft) / 140))));
+      return visible.filter((_d, i) => i % step === 0);
+    }
+    let xAxis = g => g
+      .attr('transform', 'translate(0,' + dateY + ')')
+      .call(d3.axisBottom(x)
+        .tickSizeOuter(0)
+        .tickValues(visibleTicks())
+        .tickFormat(date => (datalength / (chart.zoomTransform?.k || 1) < limdata ? format.daily : tformat)(date)));
+    const xrx = (_d, i) => x(ddata[i]);
+    return { x, xAxis, xrx, baseRange, plotLeft, plotRight, visibleTicks, datalength };
+  }
+
+  // Price scale and axis. Price-only bounds keep the scale stable when overlays are
+  // toggled; vertical panning moves the domain without zooming it.
+  priceScale(series, { margin, width, height, padding }) {
+    const chart = this;
+    let MinYScale = series.min,
+      MaxYScale = series.max,
+      PricePadding = MaxYScale > MinYScale
+        ? (MaxYScale - MinYScale) * 0.08
+        : Math.max(Math.abs(MinYScale) * 0.01, 0.01);
+    let y = d3.scaleLinear()
+      .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
+      .range([height - padding, margin.top]);
+    const baseY = y.copy(), priceHeight = height - padding - margin.top;
+    this.pricePan = Number.isFinite(this.pricePan) ? this.pricePan : 0;
+    const applyPricePan = () => {
+      // Same rescaleY mechanism as chart.js, with k fixed at 1: translate only.
+      y.domain(d3.zoomIdentity.translate(0, chart.pricePan * priceHeight).rescaleY(baseY).domain());
+    };
+    applyPricePan();
+    // Tick labels need more decimals once zoom narrows the price range.
+    const priceDecimals = () => {
+      const [low, high] = y.domain(), span = Math.abs(high - low);
+      return span > 0 ? Math.min(4, Math.max(2, Math.ceil(-Math.log10(span / 8)))) : 2;
+    };
+    let yAxis = g => g
+      .attr('transform', 'translate(' + width + ', 0)')
+      .call(d3.axisRight(y)
+        .tickFormat(d3.format(',.' + priceDecimals() + 'f'))
+        .tickSizeOuter(0));
+    return { y, yAxis, baseY, priceHeight, applyPricePan };
+  }
+
+  // Scales and axes of the MACD, ROC, RSI and Stochastic panels.
+  indicatorScales(series, { width, indicator, ibottom, panelByKey }) {
+    const { MacdLine, MacdSignal, MacdHist, Roc } = series;
+    const { macd, macdh, roc } = series.enabled;
+    let MinSignal = macd == true ? d3.min(...MacdSignal) : false,
+      MaxSignal = macd == true ? d3.max(...MacdSignal) : false,
+      MinLine = macd == true ? d3.min(...MacdLine) : false,
+      MaxLine = macd == true ? d3.max(...MacdLine) : false,
+      MinHist = macdh == true ? (typeof d3.min(...MacdHist) !== 'undefined' ? d3.min(...MacdHist) : null) : false,
+      MaxHist = macdh == true ? (typeof d3.max(...MacdHist) !== 'undefined' ? d3.max(...MacdHist) : null) : false,
+      MinMacdY = MinLine < MinSignal ? (MinLine < MinHist ? MinLine : MinHist) : (MinSignal < MinHist ? MinSignal : MinHist),
+      MaxMacdY = MaxLine > MaxSignal ? (MaxLine > MaxHist ? MaxLine : MaxHist) : (MaxSignal > MaxHist ? MaxSignal : MaxHist),
+      MinRocY = roc == true ? (typeof d3.min(Roc) !== 'undefined' ? d3.min(Roc) : null) : false,
+      MaxRocY = roc == true ? (typeof d3.max(Roc) !== 'undefined' ? d3.max(Roc) : null) : false;
+    const rightAxis = (scale, ticks) => g => g
+      .attr('transform', 'translate(' + width + ', 0)')
+      .call(d3.axisRight(scale).ticks(ticks).tickSizeOuter(0));
+    const panelRange = key => [panelByKey[key]?.bottom ?? ibottom.bottom, panelByKey[key]?.top ?? indicator.top];
+
+    let yMacd = d3.scaleLinear()
+      .domain([MinMacdY, MaxMacdY])
+      .range([ibottom.bottom, indicator.top])
+      .nice();
+    let yRoc = d3.scaleLinear()
+      .domain([MinRocY, MaxRocY])
+      .range(panelRange('roc'))
+      .nice();
+    let yRsi = d3.scaleLinear()
+      .domain([0, 100])
+      .range(panelRange('rsi'))
+      .nice();
+    let yStoch = d3.scaleLinear()
+      .domain([0, 100])
+      .range(panelRange('stoch'));
+    let ySTAxis = g => g
+      .attr('transform', 'translate(' + width + ', 0)')
+      .call(d3.axisRight(yStoch).tickValues([20, 50, 80]).tickSizeOuter(0));
+    return {
+      yMacd, yMAxis: rightAxis(yMacd, 3), yRoc, yRCAxis: rightAxis(yRoc, 3),
+      yRsi, yRAxis: rightAxis(yRsi, 3), yStoch, ySTAxis
+    };
+  }
+
+  // Line colours. An empty colour marks a series that is not drawn.
+  chartColors(series) {
+    const { MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand, MacdLine, MacdSignal, MacdHist, Roc, Rsi } = series;
+    return {
+      price: '#38678f',
+      mca: MA_a != 0 ? '#e04b4b' : '',
+      mcb: MA_b != 0 ? '#00b061' : '',
+      mcc: MA_c != 0 ? '#ff7dcd' : '',
+      mcd: MA_d != 0 ? '#a39354' : '',
+      ubbc: UpperBand != 0 ? '#909090' : '',
+      lbbc: LowerBand != 0 ? '#909090' : '',
+      macdsc: MacdSignal != 0 ? '#ff8084' : '',
+      macdlc: MacdLine != 0 ? '#0061cb' : '',
+      macdhc: MacdHist != 0 ? '#907070' : '',
+      macdhcp: MacdHist != 0 ? '#708070' : '',
+      macdhistlegc: MacdHist != 0 ? '#808080' : '',
+      rocc: Roc != 0 ? '#f28f3b' : '',
+      rsic: Rsi != 0 ? '#505050' : '',
+      stochkc: '#7a5fc0',
+      stochdc: '#c9a227',
+      signalup: '#00b061',
+      signaldown: '#e04b4b'
+    };
+  }
+
+  // Small drawing helpers shared by the panels.
+  addDrawingHelpers(ctx) {
+    const { svg, x, ddata } = ctx;
+    ctx.hrLines = [];
+    // Horizontal reference line (zero, 30 / 70, 20 / 80) across the whole plot.
+    ctx.hr = (value, yscale, color, swd) => {
+      let dateRange = [d3.max(ddata), d3.min(ddata)];
+      const xs = dateRange.map(date => x(date)); // full plot width, independent of zoom
+      const path = svg.append('g')
+        .attr('stroke-width', 0.3)
+        .selectAll('path')
+        .data([[value, value]])
+        .join('path')
+        .attr('stroke', color)
+        .attr('stroke-width', swd);
+      const place = () => path.attr('d', d3.line().x((_d, i) => xs[i]).y(() => yscale(value)));
+      place();
+      ctx.hrLines.push(place);
+    };
+    // Legend entries side by side on wide screens, stacked otherwise.
+    ctx.stackLegend = selection => {
+      let offset = 0;
+      const wide = this.container.offsetWidth > 1050;
+      selection.attr('transform', function () {
+        const at = offset;
+        offset += wide ? this.getBBox().width + 23 : this.getBBox().height + 1;
+        return wide ? 'translate(' + at + ', 0)' : 'translate(0, ' + at + ')';
+      });
+    };
+  }
+
+  // ===== Chart parts ===========================================================
+
+  // SVG frame: size, price clip and the two main axes.
+  drawFrame(ctx) {
+    const { svg, x, margin, width, height, padding, dateY, xAxis, yAxis } = ctx;
+    svg
+      // Cursor: a dot while the crosshair is on, the default arrow when it is off,
+      // and a grabbing hand while the chart is dragged (see css.css).
+      .classed('crosshair-on', Boolean(this.config.cross))
+      .classed('panning', false)
+      .attr('preserveAspectRatio', 'xMinYMin meet')
+      .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + (dateY + margin.top));
+
+    svg.append('defs').append('clipPath')
+      .attr('id', this.priceClipId)
+      .attr('clipPathUnits', 'userSpaceOnUse')
+      .append('rect')
+      .attr('x', Math.min(...x.range()))
+      .attr('y', margin.top)
+      .attr('width', Math.abs(x.range()[1] - x.range()[0]))
+      .attr('height', Math.max(0, height - padding - margin.top));
+
+    svg.append('g')
+      .attr('class', 'date-axis')
+      .call(xAxis)
+      .attr('text-anchor', 'start');
+
+    svg.append('g')
+      .attr('class', 'price-axis')
+      .call(yAxis);
+  }
+
+  // Price panel: grid, latest price, Bollinger area, price and overlay lines, legend.
+  drawPricePanel(ctx) {
+    const { svg, x, y, xrx, vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
+      config, currency, colors, intervalTag, margin, width, height, padding, plotLeft, plotRight,
+      lowerBottom, visibleTicks, yAxis } = ctx;
+    const { ma_a, ma_b, ma_c, ma_d, mma_a, mma_b, mma_c, mma_d } = config;
+    const { price, mca, mcb, mcc, mcd, ubbc, lbbc } = colors;
+    const SwMALegend = this.SwMALegend.bind(this), roundn = this.roundn.bind(this);
+    const bband = ctx.enabled.bband;
+
+    let line = d3.line()
+      .defined(Number.isFinite)
+      .x(xrx)
+      .y(y);
+
+    // Grid lines follow the axis ticks, so they are redrawn on zoom and pan.
+    const gridLayer = svg.append('g').attr('class', 'price-grid').attr('pointer-events', 'none');
+    const drawGrid = () => {
+      gridLayer.selectAll('line.grid-h')
+        .data(y.ticks().filter(tick => y(tick) >= margin.top && y(tick) <= height - padding))
+        .join('line').attr('class', 'grid-h')
+        .attr('x1', plotLeft).attr('x2', plotRight)
+        .attr('y1', tick => Math.round(y(tick)) + 0.5).attr('y2', tick => Math.round(y(tick)) + 0.5);
+      gridLayer.selectAll('line.grid-v').data(visibleTicks())
+        .join('line').attr('class', 'grid-v')
+        .attr('x1', date => Math.round(x(date)) + 0.5).attr('x2', date => Math.round(x(date)) + 0.5)
+        .attr('y1', margin.top).attr('y2', lowerBottom);
+    };
+
+    // Latest price: dashed guide plus a tag on the price axis.
+    const lastPrice = svg.append('g').attr('class', 'last-price').attr('pointer-events', 'none');
+    lastPrice.append('line').attr('x1', plotLeft).attr('x2', plotRight)
+      .attr('stroke', price).attr('stroke-width', 0.75).attr('stroke-dasharray', '2 3');
+    const lastTag = lastPrice.append('g').attr('transform', 'translate(' + width + ',0)');
+    lastTag.append('rect').attr('x', 1).attr('y', -9).attr('height', 18).attr('rx', 2)
+      .attr('width', Math.max(0, margin.right - 2)).attr('fill', price);
+    lastTag.append('text').attr('x', 9).attr('dy', '0.32em').attr('fill', '#fff').text(formatFxNumber(vdata[0]));
+    const updateLastPrice = () => {
+      const py = y(vdata[0]);
+      lastPrice.attr('display', py >= margin.top && py <= height - padding ? null : 'none')
+        .attr('transform', 'translate(0,' + py + ')');
+    };
+
+    // bollinger band area
+    const bandArea = () => d3.area().x(xrx)
+      .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low));
+    if (bband) {
+      svg.append('g')
+        .attr('class', 'abbc')
+        .attr('clip-path', `url(#${this.priceClipId})`)
+        .selectAll('path')
+        .data([BandData])
+        .join('path')
+        .attr('d', bandArea());
+    }
+
+    svg.append('g')
+      .attr('fill', 'none')
+      .attr('class', 'dline')
+      .attr('clip-path', `url(#${this.priceClipId})`)
+      .attr('stroke-linejoin', 'round')
+      .attr('stroke-linecap', 'round')
+      .attr('stroke-width', 1)
+      .selectAll('path')
+      .data([vdata, MA_a, MA_b, MA_c, MA_d, LowerBand, UpperBand])
+      .join('path')
+      .attr('stroke', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc][i])
+      .attr('d', line);
+
+    // Legend text: the latest values, or the values at the crosshair date.
+    const legendText = (date, value, fd, maValue) => (_d, i) => {
+      const ma = (data, kind, period, v) => !isNaN(data[0]) ? SwMALegend(kind) + period + ': ' + fd(v) : '';
+      return [
+        d3.timeFormat('%a, %d %b %Y')(date) + ', ' + currency + '/ALL: ' + fd(value) + ' ' + intervalTag,
+        ma(MA_a, mma_a, ma_a, maValue.MA_a), ma(MA_b, mma_b, ma_b, maValue.MA_b),
+        ma(MA_c, mma_c, ma_c, maValue.MA_c), ma(MA_d, mma_d, ma_d, maValue.MA_d),
+        !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(maValue.UpperBand) : '',
+        !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(maValue.LowerBand) : ''
+      ].filter(x => x !== '')[i];
+    };
+    const latest = legendText(ddata[0], vdata[0], formatFxNumber, {
+      MA_a: roundn(MA_a[0]), MA_b: roundn(MA_b[0]), MA_c: roundn(MA_c[0]), MA_d: roundn(MA_d[0]),
+      UpperBand: UpperBand[0], LowerBand: LowerBand[0]
+    });
+
+    const legend = svg.append('g')
+      .attr('class', 'legend')
+      .attr('transform', 'translate(' + padding + ',' + margin.top + ')');
+
+    const lg = legend.selectAll('g')
+      .data([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand].filter(x => x != 0 || !isNaN(x)))
+      .join('g')
+      .append('text')
+      .style('fill', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc].filter(x => x !== '')[i]);
+
+    lg.text(latest);
+    ctx.stackLegend(lg);
+
+    return {
+      legend: {
+        reset: () => lg.text(latest),
+        show: snapshot => lg.text(legendText(snapshot.date, snapshot.values.vdata, formatFxNumber, snapshot.values))
+      },
+      // Lines that follow the price scale; called after the price pan is applied.
+      update: () => {
+        svg.select('.price-axis').call(yAxis);
+        svg.select('.dline').selectAll('path').attr('d', line);
+        svg.select('.abbc').selectAll('path').attr('d', bandArea());
+      },
+      updateOverlay: () => { drawGrid(); updateLastPrice(); }
+    };
+  }
+
+  // MACD panel: histogram, MACD and signal lines, zero line, legend.
+  drawMacdPanel(ctx) {
+    const { svg, xrx, yMacd, yMAxis, MacdLine, MacdSignal, MacdHist, macd, macdh, colors,
+      datalength, macdhbinsl, macdhbinsm, padding, indicator, pointerFormat } = ctx;
+    if (!(macd || macdh)) return { update: () => {} };
+    const { macdlc, macdsc, macdhc, macdhcp, macdhistlegc } = colors;
+    const roundn = this.roundn.bind(this);
+    svg.append('g')
+      .attr('class', 'macd-axis')
+      .call(yMAxis);
+
+    if (macdh) {
+      svg.append('g')
+        .attr('class', 'zoom-histogram')
+        .selectAll('rect')
+        .data(...MacdHist)
+        .join('rect')
+        .attr('class', 'macdhc')
+        .attr('x', xrx)
+        .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+        .attr('height', d => Math.abs(yMacd(d) - yMacd(0)))
+        .attr('width', (datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5)))
+        .attr('transform', 'translate(' + (datalength > macdhbinsl ? -1 : (datalength > macdhbinsm ? -1.5 : -2)) + ', 0)')
+        .attr('fill', d => { return d > 0 ? macdhcp : macdhc });
+    }
+
+    const macdLine = () => d3.line().defined(Number.isFinite).x(xrx).y(yMacd);
+    if (macd) {
+      svg.append('g')
+        .attr('class', 'zoom-macd')
+        .attr('fill', 'none')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-width', 1)
+        .selectAll('path')
+        .data([...MacdLine, ...MacdSignal])
+        .join('path')
+        .attr('stroke', (_d, i) => {
+          return [macdlc, macdsc][i];
+        })
+        .attr('d', macdLine());
+    }
+
+    ctx.hr(0, yMacd, '#808080', 0.3);
+
+    // Legend text: the latest values, or the values at the crosshair date.
+    const legendText = (line, signal, histogram, fd) => (_d, i) => [
+      macd ? 'MACD Line: ' + fd(line) : 0,
+      macd ? 'MACD Signal: ' + fd(signal) : 0,
+      macdh ? 'MACD Histogram: ' + fd(histogram) : 0
+    ].filter(x => x != 0)[i];
+    const latestFormat = value => d3.format(',')(roundn(value));
+    const latest = legendText(macd ? MacdLine[0][0] : 0, macd ? MacdSignal[0][0] : 0, macdh ? MacdHist[0][0] : 0, latestFormat);
+
+    const macdlegend = svg.append('g')
+      .attr('class', 'macdlegend')
+      .attr('transform', 'translate(' + padding + ',' + indicator.top + ')');
+
+    const macdlg = macdlegend.selectAll('g')
+      .data([MacdLine, MacdSignal, MacdHist])
+      .join('g')
+      .append('text')
+      .style('fill', (_d, i) => [macdlc, macdsc, macdhistlegc].filter(x => x !== '')[i]);
+
+    macdlg.text(latest);
+    ctx.stackLegend(macdlg);
+
+    return {
+      legend: {
+        reset: () => macdlg.text(latest),
+        show: ({ values }) => macdlg.text(legendText(values.MacdLine, values.MacdSignal, values.MacdHist, pointerFormat))
+      },
+      update: () => {
+        svg.select('.zoom-macd').selectAll('path').attr('d', macdLine());
+        // Bar width follows the spacing between points (never thinner than the
+        // original bins), so zooming in widens the bars instead of leaving lines.
+        const { x, ddata } = ctx;
+        const histStep = datalength > 1 ? Math.abs(x(ddata[1]) - x(ddata[0])) : 0;
+        const histWidth = Math.max(datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5), Math.min(histStep * 0.7, 14));
+        svg.select('.zoom-histogram').selectAll('rect').attr('transform', null)
+          .attr('width', histWidth).attr('x', (d, i) => xrx(d, i) - histWidth / 2)
+          .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
+          .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
+        svg.select('.macd-axis').call(yMAxis);
+      }
+    };
+  }
+
+  // ROC, RSI and Stochastic panels, each with its reference lines and legend.
+  drawOscillatorPanels(ctx) {
+    const { svg, xrx, yRoc, yRCAxis, yRsi, yRAxis, yStoch, ySTAxis, Roc, Rsi, StochK, StochD,
+      roc, rsi, stoch, colors, padding, panelByKey, config } = ctx;
+    const { rocc, rsic, stochkc, stochdc } = colors;
+    const roundn = this.roundn.bind(this);
+    const oscLine = scale => d3.line().defined(Number.isFinite).x(xrx).y(scale);
+    const draw = (key, scale, axis, data, strokes) => {
+      svg.append('g')
+        .attr('class', key + '-axis')
+        .call(axis);
+      svg.append('g')
+        .attr('class', 'zoom-' + key)
+        .attr('fill', 'none')
+        .attr('stroke-linejoin', 'round')
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-width', 1)
+        .selectAll('path')
+        .data(data)
+        .join('path')
+        .attr('stroke', (_d, i) => strokes[i])
+        .attr('d', oscLine(scale));
+    };
+    // ROC
+    if (roc) {
+      draw('roc', yRoc, yRCAxis, [Roc], [rocc]);
+      ctx.hr(0, yRoc, '#f28f3b', 0.3);
+    }
+    // RSI
+    if (rsi) {
+      draw('rsi', yRsi, yRAxis, [Rsi], [rsic]);
+      ctx.hr(30, yRsi, '#808080', 0.3);
+      ctx.hr(70, yRsi, '#808080', 0.3);
+    }
+    // Stochastic (closing prices only: the source has no high / low).
+    if (stoch) {
+      draw('stoch', yStoch, ySTAxis, [StochK, StochD], [stochkc, stochdc]);
+      ctx.hr(20, yStoch, '#808080', 0.3);
+      ctx.hr(80, yStoch, '#808080', 0.3);
+    }
+
+    const oscFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
+    const oscText = {
+      roc: i => 'ROC: ' + oscFormat(Roc[i]),
+      rsi: i => 'RSI: ' + oscFormat(Rsi[i]),
+      stoch: i => 'Stoch' + config.ST + ' %K: ' + oscFormat(StochK[i]) + ', %D: ' + oscFormat(StochD[i])
+    };
+    const legends = [];
+    for (const [key, enabled, color] of [['roc', roc, rocc], ['rsi', rsi, rsic], ['stoch', stoch, stochkc]]) {
+      if (!enabled) continue;
+      const text = svg.append('g')
+        .attr('class', 'rsrclegend ' + key + 'legend')
+        .attr('transform', 'translate(' + padding + ',' + panelByKey[key].top + ')')
+        .append('g').append('text').style('fill', color);
+      text.text(() => oscText[key](0));
+      ctx.stackLegend(text);
+      legends.push({
+        reset: () => text.text(oscText[key](0)),
+        show: snapshot => text.text(oscText[key](snapshot.index))
+      });
+    }
+    return {
+      legends,
+      update: () => {
+        svg.select('.zoom-roc').selectAll('path').attr('d', oscLine(yRoc));
+        svg.select('.zoom-rsi').selectAll('path').attr('d', oscLine(yRsi));
+        svg.select('.zoom-stoch').selectAll('path').attr('d', oscLine(yStoch));
+        svg.select('.roc-axis').call(yRCAxis);
+      }
+    };
+  }
+
+  // Crosshair: lines, tags on the axes, pointer hit areas and the legends it drives.
+  // Returns hidePointer().
+  drawCrosshair(ctx, legends) {
+    const chart = this;
+    const { svg, x, y, yMacd, yRoc, yRsi, yStoch, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+      MacdLine, MacdSignal, MacdHist, Roc, Rsi, StochK, StochD, macd, macdh, interval,
+      margin, width, padding, indicator, panelByKey, plotLeft, plotRight, lowerBottom, dateY, pointerFormat } = ctx;
+    const roundx = this.roundx.bind(this);
+    let crssh = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none'),
+      crosshair = crssh.append('g')
+        .attr('stroke-width', 0.5);
+
+    // The value goes on the price axis and the date on the date axis,
+    // so nothing is drawn next to (or under) the cursor or the finger.
+    const axisTag = (width, anchor) => {
+      const tag = crssh.append('g').style('display', 'none');
+      tag.append('rect').attr('height', 18).attr('rx', 2).attr('y', anchor).attr('fill', '#5b6270');
+      tag.append('text').attr('dy', '0.32em').attr('y', anchor + 9).attr('fill', '#fff');
+      return tag;
+    };
+    const axisY = axisTag(0, -9), axisX = axisTag(0, 3);
+    axisY.select('rect').attr('x', 1).attr('width', Math.max(0, margin.right - 2));
+    axisY.select('text').attr('x', 9);
+    axisX.select('rect').attr('x', -40).attr('width', 80);
+    axisX.select('text').attr('text-anchor', 'middle');
+    const axisDate = d3.timeFormat(interval === 'mave' || interval === 'quave' ? '%b %Y' : '%d %b %Y');
+
+    // vertical line
+    crosshair.append('line')
+      .attr('id', 'crsx')
+      .attr('stroke', '#cdcdcd');
+
+    // horizontal line
+    crosshair.append('line')
+      .attr('id', 'crsy')
+      .attr('stroke', '#cdcdcd');
+
+    // grid
+    svg.append('rect')
+      .attr('class', 'grid')
+      .attr('fill', 'none')
+      .attr('pointer-events', 'all')
+      .attr('x', padding)
+      .attr('y', margin.top)
+      .attr('width', x.range()[0] - padding)
+      .attr('height', y.range()[0] - margin.top);
+
+    // macd grid
+    if (macd || macdh) {
+      svg.append('rect')
+        .attr('class', 'macdgrid')
+        .attr('fill', 'none')
+        .attr('pointer-events', 'all')
+        .attr('x', padding)
+        .attr('y', indicator.top)
+        .attr('width', x.range()[0] - padding)
+        .attr('height', yMacd.range()[0] - indicator.top);
+    }
+
+    // Separate ROC, RSI and Stochastic hit areas; all panels share the same date pointer.
+    for (const key of ['roc', 'rsi', 'stoch']) {
+      const panel = panelByKey[key];
+      if (!panel) continue;
+      svg.append('rect')
+        .attr('class', 'rsrcgrid ' + key + 'grid')
+        .attr('fill', 'none')
+        .attr('pointer-events', 'all')
+        .attr('x', padding)
+        .attr('y', panel.top)
+        .attr('width', x.range()[0] - padding)
+        .attr('height', panel.bottom - panel.top);
+    }
+
+    function hidePointer() {
+      chart.state.pointerIndex = null;
+      crosshair.style('display', 'none');
+      axisY.style('display', 'none');
+      axisX.style('display', 'none');
+      legends.forEach(legend => legend.reset());
+    }
+    const pointerSeries = {
+      vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+      MacdLine: macd ? MacdLine[0] : null,
+      MacdSignal: macd ? MacdSignal[0] : null,
+      MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK, StochD
+    };
+    function paintPointer(event) {
+      const [rawX, yval] = d3.pointer(event, svg.node());
+      const panel = chart.panelGeometry.find(item => yval >= item.top && yval <= item.bottom)?.key;
+      if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
+      const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
+      if (!snapshot) { hidePointer(); return; }
+      chart.state.pointerIndex = snapshot.index;
+      const xval = snapshot.x, yVonx = snapshot.values;
+      crosshair.style('display', null);
+
+      // Value at the pointer height, used where no series has a value.
+      function linelabel() {
+        let fd = d3.format(',');
+        switch (panel) {
+          case 'roc': return roundx(yRoc.invert(yval));
+          case 'rsi': return roundx(yRsi.invert(yval));
+          case 'stoch': return roundx(Math.max(0, Math.min(100, yStoch.invert(yval))));
+          case 'macd': return fd(roundx(yMacd.invert(yval)));
+          default: return d3.format(',.2f')(y.invert(yval));
+        }
+      }
+
+      // vertical line
+      crosshair.select('#crsx')
+        .attr('x1', xval)
+        .attr('y1', margin.top)
+        .attr('x2', xval)
+        .attr('y2', lowerBottom);
+
+      // Like the vertical line snaps to the date, the horizontal line snaps to a
+      // series value at that date. In panels with several lines (MACD line, signal,
+      // histogram; Stochastic %K, %D; price and its overlays) it takes the one
+      // closest to the pointer.
+      // Where no series has a value (an indicator still warming up) it keeps the
+      // pointer's own height.
+      const oscillator = value => d3.format(',')(roundx(value));
+      const candidates = ({
+        // Price plus every overlay that is drawn (moving averages, Bollinger bands).
+        price: [yVonx.vdata, yVonx.MA_a, yVonx.MA_b, yVonx.MA_c, yVonx.MA_d,
+            yVonx.UpperBand, yVonx.LowerBand].map(value => [value, y, formatFxNumber]),
+        macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
+            [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
+            [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
+        roc: [[yVonx.Roc, yRoc, oscillator]],
+        rsi: [[yVonx.Rsi, yRsi, oscillator]],
+        stoch: [[yVonx.StochK, yStoch, oscillator], [yVonx.StochD, yStoch, oscillator]]
+      })[panel] || [];
+      let target = null, distance = Infinity;
+      for (const candidate of candidates) {
+        if (!Number.isFinite(candidate[0])) continue;
+        const gap = Math.abs(candidate[1](candidate[0]) - yval);
+        if (gap < distance) { distance = gap; target = candidate; }
+      }
+      const snapped = target !== null;
+      const panelBox = chart.panelGeometry.find(item => item.key === panel);
+      const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
+      const valueText = snapped ? target[2](target[0]) : linelabel();
+
+      // horizontal line
+      crosshair.select('#crsy')
+        .attr('x1', plotLeft)
+        .attr('y1', lineY)
+        .attr('x2', plotRight)
+        .attr('y2', lineY);
+
+      axisY.style('display', null)
+        .attr('transform', 'translate(' + width + ',' + lineY + ')')
+        .select('text').text(valueText);
+      axisX.style('display', null)
+        .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
+        .select('text').text(axisDate(snapshot.date));
+
+      legends.forEach(legend => legend.show(snapshot));
+    }
+    hidePointer();
+    this.bindChartPointer(svg, paintPointer, hidePointer);
+    return hidePointer;
+  }
+
+  // Crossover signals. With two or more moving averages the first two are
+  // compared (shorter period = fast line); with one, price against it.
+  // Returns the function that places them after zoom.
+  drawSignals(ctx) {
+    const chart = this;
+    const { svg, x, y, yMacd, ddata, vdata, MA_a, MA_b, MA_c, MA_d, MacdCross, macd, macdh,
+      config, colors, margin, height, padding, plotLeft, plotRight, panelByKey } = ctx;
+    const { ma_a, ma_b, ma_c, ma_d } = config;
+    let updateSignals = () => {};
+    if (config.signals) {
+      const averages = [[MA_a, ma_a], [MA_b, ma_b], [MA_c, ma_c], [MA_d, ma_d]]
+        .filter(([data]) => data && data.length > 1).slice(0, 2).sort((p, q) => p[1] - q[1]);
+      const fast = averages.length === 2 ? averages[0][0] : (averages.length === 1 ? vdata : null);
+      const slow = averages.length ? averages[averages.length - 1][0] : null;
+      const marks = [
+        ...chart.crossings(fast, slow).map(mark => ({ ...mark, value: fast[mark.index], scale: y, panel: 'price' })),
+        // A MACD / signal crossover is where the histogram crosses zero. With the
+        // lines hidden the marker sits on that zero line instead of on a line that is not drawn.
+        ...((macd || macdh) && MacdCross ? chart.crossings(MacdCross.line, MacdCross.signal)
+          .map(mark => ({ ...mark, value: macd ? MacdCross.line[mark.index] : 0, scale: yMacd, panel: 'macd' })) : [])
+      ];
+      const triangle = d3.symbol().type(d3.symbolTriangle).size(34)();
+      const layer = svg.append('g').attr('class', 'signals').attr('pointer-events', 'none');
+      const nodes = layer.selectAll('path').data(marks).join('path').attr('d', triangle)
+        .attr('fill', mark => mark.up ? colors.signalup : colors.signaldown)
+        .attr('clip-path', mark => 'url(#' + chart.priceClipId + (mark.panel === 'price' ? '' : '-' + mark.panel) + '-marks)');
+      // Clip the unrotated wrapper, not the rotated symbol.
+      nodes.each(function () {
+        const wrapper = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        wrapper.setAttribute('clip-path', this.getAttribute('clip-path'));
+        this.removeAttribute('clip-path');
+        this.parentNode.insertBefore(wrapper, this); wrapper.appendChild(this);
+      });
+      // Markers in a crowded panel hide on their own; zooming in brings them back.
+      updateSignals = () => {
+        const limit = Math.max(10, Math.floor((plotRight - plotLeft) / 14));
+        const visible = { price: 0, macd: 0 };
+        for (const mark of marks) {
+          mark.px = x(ddata[mark.index]);
+          if (mark.px >= plotLeft && mark.px <= plotRight) visible[mark.panel]++;
+        }
+        const crowded = panel => visible[panel] > limit;
+        nodes.attr('display', mark => crowded(mark.panel) ? 'none' : null)
+          .attr('transform', mark => 'translate(' + mark.px + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
+      };
+    }
+    const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
+      .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
+    markClip('', margin.top, height - padding);
+    if (panelByKey.macd) markClip('-macd', panelByKey.macd.top, panelByKey.macd.bottom);
+    return updateSignals;
+  }
+
+  // Zoom and pan. Only geometry is updated during gestures; indicator values stay
+  // calculated from the loaded history, so zoom does not restart their warm-up.
+  setupZoom(ctx, { panels: panelUpdates, afterAxes, hidePointer }) {
+    const chart = this;
+    const { svg, x, y, baseY, baseRange, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
+      MacdLine, MacdSignal, MacdHist, Roc, macd, macdh, roc, yMacd, yRoc, datalength,
+      margin, height, padding, panels, plotLeft, plotRight, priceHeight, applyPricePan, xAxis } = ctx;
+    for (const panel of panels) {
+      const clipId = this.priceClipId + '-' + panel.key;
+      svg.select('defs').append('clipPath').attr('id', clipId)
+        // 2px of room on each side: a line resting exactly on a limit (closing-price
+        // Stochastic often sits on 0 or 100) is not cut in half by the clip.
+        .append('rect').attr('x', plotLeft).attr('y', panel.top - 2)
+        .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top + 4);
+      svg.selectAll(panel.key === 'macd' ? '.zoom-macd, .zoom-histogram' : '.zoom-' + panel.key)
+        .attr('clip-path', `url(#${clipId})`);
+    }
+    const extent = [[plotLeft, margin.top], [plotRight, height - padding]];
+    const maxZoom = Math.max(1, Math.min(100, (datalength - 1) / 9));
+    const constrain = transform => {
+      const k = Math.max(1, Math.min(maxZoom, transform.k));
+      const tx = Math.max(plotRight * (1 - k), Math.min(plotLeft * (1 - k), transform.x));
+      return d3.zoomIdentity.translate(tx, Number.isFinite(transform.y) ? transform.y : 0).scale(k);
+    };
+    // Limit the translation to useful space, including any clipped enabled overlays.
+    let minPan = -0.25, maxPan = 0.25;
+    // Y scales follow the visible part of the data, so zooming in on a quiet
+    // stretch is not drawn as a flat line on a scale made for the whole history.
+    const visibleIndices = () => {
+      const range = x.range(), last = datalength - 1;
+      if (last < 1) return [0, Math.max(0, last)];
+      const step = (range[1] - range[0]) / last;
+      const a = (plotLeft - range[0]) / step, b = (plotRight - range[0]) / step;
+      // One extra point on each side lets lines run to the plot edge.
+      const low = Math.max(0, Math.ceil(Math.min(a, b) - 1e-9) - 1);
+      const high = Math.min(last, Math.floor(Math.max(a, b) + 1e-9) + 1);
+      return low <= high ? [low, high] : [0, last];
+    };
+    const extentOf = (seriesList, low, high, include) => {
+      let min = include ?? Infinity, max = include ?? -Infinity;
+      for (const series of seriesList) {
+        if (!series) continue;
+        for (let i = low, end = Math.min(high, series.length - 1); i <= end; i++) {
+          const value = series[i];
+          if (Number.isFinite(value)) { if (value < min) min = value; if (value > max) max = value; }
+        }
+      }
+      return [min, max];
+    };
+    const fitDomain = (scale, [min, max], pad = 0) => {
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+      if (!(max > min)) { const gap = Math.max(Math.abs(min) * 0.01, 0.01); min -= gap; max += gap; }
+      scale.domain([min - (max - min) * pad, max + (max - min) * pad]);
+    };
+    const autoscale = () => {
+      const [low, high] = visibleIndices();
+      // Price only: overlays toggled on or off must not move the price scale.
+      fitDomain(baseY, extentOf([vdata], low, high), 0.08);
+      const visiblePlotted = extentOf([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand], low, high);
+      if (Number.isFinite(visiblePlotted[0])) {
+        minPan = Math.min(-0.25, chart.pricePan, (height - padding * 2 - baseY(visiblePlotted[0])) / priceHeight);
+        maxPan = Math.max(0.25, chart.pricePan, (margin.top + padding - baseY(visiblePlotted[1])) / priceHeight);
+      }
+      // MACD and ROC both draw a zero line, so zero stays inside their range.
+      if (macd || macdh) fitDomain(yMacd, extentOf([macd ? MacdLine[0] : null, macd ? MacdSignal[0] : null, macdh ? MacdHist[0] : null], low, high, 0), 0.05);
+      if (roc) fitDomain(yRoc, extentOf([Roc], low, high, 0), 0.05);
+    };
+    const gesturePoint = event => {
+      if (!event) return null;
+      const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
+      return points.length ? [d3.mean(points, point => point[0]), d3.mean(points, point => point[1])] : null;
+    };
+    let panGesture = null;
+    const updateZoom = event => {
+      const transform = constrain(event.transform);
+      chart.zoomTransform = d3.zoomIdentity.translate(transform.x, 0).scale(transform.k);
+      x.range(baseRange.map(pixel => transform.applyX(pixel)));
+      autoscale();
+      const source = event.sourceEvent;
+      if (panGesture && (source?.type === 'mousemove' || source?.type === 'touchmove')) {
+        const count = source.touches?.length || 1, point = gesturePoint(source);
+        if (point) {
+          if (count !== panGesture.count) {
+            panGesture.py = point[1]; panGesture.offset = chart.pricePan; panGesture.count = count;
+          }
+          if (!source.touches || count >= 2) {
+            const delta = point[1] - panGesture.py;
+            if (Math.abs(delta) >= 3 || panGesture.active) {
+              panGesture.active = true;
+              chart.pricePan = Math.max(minPan, Math.min(maxPan, panGesture.offset + delta / priceHeight));
+            }
+          }
+        }
+      }
+      applyPricePan();
+      panelUpdates.forEach(update => update());
+      ctx.hrLines.forEach(place => place());
+      svg.select('.date-axis').call(xAxis).select('.domain')
+        .attr('d', `M${plotLeft},0.5H${plotRight}`);
+      afterAxes.forEach(update => update());
+      hidePointer();
+    };
+    this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
+      .constrain(constrain)
+      .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
+        (!event.button || event.type === 'wheel') &&
+        (event.type !== 'wheel' || event.ctrlKey || event.metaKey) &&
+        !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
+        (event.type !== 'touchstart' || event.touches.length >= 2) && (() => {
+          const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
+          return points.every(([px, py]) => px >= plotLeft && px <= plotRight &&
+            chart.panelGeometry.some(panel => py >= panel.top && py <= panel.bottom));
+        })())
+      .on('start', event => {
+        chart.zooming = true; hidePointer();
+        if (event.sourceEvent?.type === 'mousedown') svg.classed('panning', true);
+        const point = gesturePoint(event.sourceEvent);
+        panGesture = point && ['mousedown', 'touchstart'].includes(event.sourceEvent?.type) &&
+          point[1] >= margin.top && point[1] <= height - padding
+          ? { py: point[1], offset: chart.pricePan, count: event.sourceEvent.touches?.length || 1, active: false } : null;
+      })
+      .on('zoom', updateZoom)
+      .on('end', () => { chart.zooming = false; panGesture = null; svg.classed('panning', false); });
+    svg.style('touch-action', 'pan-y').call(this.zoomBehavior)
+      .on('dblclick.zoom', null)
+      .on('dblclick.reset', event => {
+        if (chart.drawingTrend || chart.trendEdit) return;
+        event.preventDefault();
+        chart.pricePan = 0;
+        svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
+      });
+    // Cooperative gestures: a plain wheel scrolls the page; two fingers belong to
+    // the chart, and a long-press crosshair must not scroll the page.
+    svg.on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
+      .on('touchmove.guard', event => { if (chart.touchInspect && event.cancelable) event.preventDefault(); }, { passive: false });
+    svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
+  }
+
+  // ===== Pointer and crosshair input ===========================================
+
+  pointerSnapshot(pixel, dates, range, bounds, series) {
+    if (!dates.length || !Number.isFinite(pixel)) return null;
+    const last = dates.length - 1;
+    const step = last ? (range[1] - range[0]) / last : 0;
+    let index = 0;
+    if (step) {
+      const edges = bounds.map(p => (p - range[0]) / step);
+      const firstVisible = Math.max(0, Math.ceil(Math.min(...edges) - 1e-9));
+      const lastVisible = Math.min(last, Math.floor(Math.max(...edges) + 1e-9));
+      if (firstVisible > lastVisible) return null;
+      index = Math.max(firstVisible, Math.min(lastVisible, Math.round((pixel - range[0]) / step)));
+    }
+    const values = {};
+    for (const [name, data] of Object.entries(series)) {
+      const value = data?.[index];
+      values[name] = Number.isFinite(value) ? value : null;
+    }
+    return { index, date: dates[index], x: step ? range[0] + index * step : (range[0] + range[1]) / 2, values };
+  }
+
+  // Mouse / trackpad: the crosshair follows the pointer. Touch: one finger scrolls
+  // the page, two fingers move and zoom the chart, and a long press (about 300 ms)
+  // starts the crosshair. After the finger lifts the crosshair stays until the next touch.
+  bindChartPointer(svg, paint, hide) {
+    const chart = this, node = svg.node();
+    const holdMs = 300, slop = 8;
+    let touch = null;
+    const touchLike = event => event.pointerType === 'touch';
+    const release = id => { if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id); };
+    const stopTouch = () => {
+      if (!touch) return;
+      clearTimeout(touch.timer); release(touch.id); touch = null; chart.touchInspect = false;
+    };
+    const blocked = event => event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle');
+    this.hideCrosshair = hide;
+    svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
+      chart.pointerType = event.pointerType;
+      if (!chart.config.cross) return; // button off: nothing is drawn (already hidden by render())
+      if (blocked(event)) { hide(); return; }
+      if (!touchLike(event)) {
+        if (event.type === 'pointerdown' && event.button !== 0) { hide(); return; }
+        if (chart.zooming || chart.drawingTrend || chart.trendEdit || event.buttons) { hide(); return; }
+        paint(event);
+        return;
+      }
+      if (event.type === 'pointerdown') {
+        event.preventDefault(); // no compatibility mouse events
+        hide();
+        if (touch) { stopTouch(); return; } // a second finger belongs to the zoom gesture
+        touch = { id: event.pointerId, x: event.clientX, y: event.clientY, inspecting: false, last: event };
+        touch.timer = setTimeout(() => {
+          const current = touch;
+          if (!current || chart.zooming || chart.drawingTrend || chart.trendEdit) return;
+          current.inspecting = true; chart.touchInspect = true;
+          node.setPointerCapture?.(current.id);
+          navigator.vibrate?.(8);
+          paint(current.last);
+        }, holdMs);
+        return;
+      }
+      if (event.type === 'pointermove' && touch && touch.id === event.pointerId) {
+        touch.last = event;
+        if (touch.inspecting) { if (!chart.zooming) paint(event); return; }
+        const dx = event.clientX - touch.x, dy = event.clientY - touch.y;
+        if (Math.hypot(dx, dy) > slop) {
+          clearTimeout(touch.timer); // moving: this is not a long press
+        }
+      }
+    });
+    svg.on('pointerup.inspect pointercancel.inspect lostpointercapture.inspect', event => {
+      if (touchLike(event)) {
+        if (touch && touch.id === event.pointerId) {
+          if (event.type === 'pointercancel') { stopTouch(); hide(); } // the browser took over: page scroll
+          else if (event.type === 'pointerup') stopTouch();            // a long-press crosshair stays visible
+        }
+        return;
+      }
+      if (event.type !== 'pointerup') hide();
+    });
+    svg.on('pointerleave.inspect', event => { if (!touchLike(event)) hide(); });
+    this.pointerCleanup = () => {
+      svg.on('.inspect', null);
+      stopTouch();
+      hide();
+      this.hideCrosshair = null;
+      this.pointerCleanup = null;
+    };
+  }
+
+  // ===== Trend lines and horizontal levels =====================================
 
   trendPoint(px, py, dates, x, y, bounds, clamp = false) {
     if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
@@ -736,6 +1844,8 @@ class HistoricalPriceChart {
     redraw();
   }
 
+  // ===== Information events (data/events.json) =================================
+
   normalizeInfoEvents(events) {
     if (!Array.isArray(events)) throw new TypeError('Ngjarjet duhet të jenë një listë.');
     return events.map((event, index) => {
@@ -878,136 +1988,7 @@ class HistoricalPriceChart {
     };
   }
 
-  pointerSnapshot(pixel, dates, range, bounds, series) {
-    if (!dates.length || !Number.isFinite(pixel)) return null;
-    const last = dates.length - 1;
-    const step = last ? (range[1] - range[0]) / last : 0;
-    let index = 0;
-    if (step) {
-      const edges = bounds.map(p => (p - range[0]) / step);
-      const firstVisible = Math.max(0, Math.ceil(Math.min(...edges) - 1e-9));
-      const lastVisible = Math.min(last, Math.floor(Math.max(...edges) + 1e-9));
-      if (firstVisible > lastVisible) return null;
-      index = Math.max(firstVisible, Math.min(lastVisible, Math.round((pixel - range[0]) / step)));
-    }
-    const values = {};
-    for (const [name, data] of Object.entries(series)) {
-      const value = data?.[index];
-      values[name] = Number.isFinite(value) ? value : null;
-    }
-    return { index, date: dates[index], x: step ? range[0] + index * step : (range[0] + range[1]) / 2, values };
-  }
-
-  // Mouse / trackpad: the crosshair follows the pointer. Touch: one finger scrolls
-  // the page, two fingers move and zoom the chart, and a long press (about 300 ms)
-  // starts the crosshair. After the finger lifts the crosshair stays until the next touch.
-  bindChartPointer(svg, paint, hide) {
-    const chart = this, node = svg.node();
-    const holdMs = 300, slop = 8;
-    let touch = null;
-    const touchLike = event => event.pointerType === 'touch';
-    const release = id => { if (node.hasPointerCapture?.(id)) node.releasePointerCapture(id); };
-    const stopTouch = () => {
-      if (!touch) return;
-      clearTimeout(touch.timer); release(touch.id); touch = null; chart.touchInspect = false;
-    };
-    const blocked = event => event.target?.closest?.('.info-marker, .trend, .trend-hit, .trend-handle');
-    this.hideCrosshair = hide;
-    svg.on('pointerenter.inspect pointermove.inspect pointerdown.inspect', event => {
-      chart.pointerType = event.pointerType;
-      if (!chart.config.cross) return; // button off: nothing is drawn (already hidden by render())
-      if (blocked(event)) { hide(); return; }
-      if (!touchLike(event)) {
-        if (event.type === 'pointerdown' && event.button !== 0) { hide(); return; }
-        if (chart.zooming || chart.drawingTrend || chart.trendEdit || event.buttons) { hide(); return; }
-        paint(event);
-        return;
-      }
-      if (event.type === 'pointerdown') {
-        event.preventDefault(); // no compatibility mouse events
-        hide();
-        if (touch) { stopTouch(); return; } // a second finger belongs to the zoom gesture
-        touch = { id: event.pointerId, x: event.clientX, y: event.clientY, inspecting: false, last: event };
-        touch.timer = setTimeout(() => {
-          const current = touch;
-          if (!current || chart.zooming || chart.drawingTrend || chart.trendEdit) return;
-          current.inspecting = true; chart.touchInspect = true;
-          node.setPointerCapture?.(current.id);
-          navigator.vibrate?.(8);
-          paint(current.last);
-        }, holdMs);
-        return;
-      }
-      if (event.type === 'pointermove' && touch && touch.id === event.pointerId) {
-        touch.last = event;
-        if (touch.inspecting) { if (!chart.zooming) paint(event); return; }
-        const dx = event.clientX - touch.x, dy = event.clientY - touch.y;
-        if (Math.hypot(dx, dy) > slop) {
-          clearTimeout(touch.timer); // moving: this is not a long press
-        }
-      }
-    });
-    svg.on('pointerup.inspect pointercancel.inspect lostpointercapture.inspect', event => {
-      if (touchLike(event)) {
-        if (touch && touch.id === event.pointerId) {
-          if (event.type === 'pointercancel') { stopTouch(); hide(); } // the browser took over: page scroll
-          else if (event.type === 'pointerup') stopTouch();            // a long-press crosshair stays visible
-        }
-        return;
-      }
-      if (event.type !== 'pointerup') hide();
-    });
-    svg.on('pointerleave.inspect', event => { if (!touchLike(event)) hide(); });
-    this.pointerCleanup = () => {
-      svg.on('.inspect', null);
-      stopTouch();
-      hide();
-      this.hideCrosshair = null;
-      this.pointerCleanup = null;
-    };
-  }
-
-  showError(message) {
-    let node = this.container.querySelector('[data-chart-error]');
-    if (!node) { node=document.createElement('p'); node.dataset.chartError=''; node.setAttribute('role','status'); this.container.appendChild(node); }
-    node.textContent=message;
-  }
-
-  bindControls() {
-    const panel = document.getElementById('cpanel');
-    const select = document.getElementById('ix');
-    this.listen(panel, 'change', event => {
-      const target=event.target;
-      if (target.id==='start' && select) {
-        select.disabled=Boolean(target.value); select.style.textDecoration=target.value?'line-through':'unset';
-      }
-      if (target.matches('input[name=currency], input[name=interval], input[type=date], #ix')) {
-        if (target.name==='interval') this.switchintervalix(target.value,select);
-        this.closemenu(); this.reloadData();
-      } else if (target.matches('#overlays input, #indicators input')) this.refreshIndicators();
-    });
-    this.listen(panel, 'keydown', event => {
-      if(event.key!=='Enter' || event.target.id==='q') return;
-      event.preventDefault(); this.closemenu();
-      if(event.target.matches('#overlays input, #indicators input')) this.refreshIndicators();
-      else this.reloadData();
-    });
-    this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
-    this.listen(document, 'pointerdown', event => {
-      if (!this.container.contains(event.target)) this.hideCrosshair?.();
-    });
-    this.listen(window, 'keydown', event => {
-      if (event.key !== 'Escape') return;
-      if (this.trendEdit) this.finishTrendEdit(false);
-      else if (this.trendDraft) this.cancelTrendDraft();
-      else { this.selectedTrendId = null; this.updateTrendLines?.(); }
-    });
-  }
-
-  closemenu() {
-    const label=document.querySelector('label[for=menu]'), menu=document.getElementById('menu');
-    if(label&&menu&&window.getComputedStyle(label,'::after').content.includes(label.getAttribute('data-abbr'))) menu.checked=false;
-  }
+  // ===== Currency converter ====================================================
 
   async convertOrQuote() {
     const input=document.getElementById('q'), output=document.getElementById('cqr');
@@ -1020,1014 +2001,30 @@ class HistoricalPriceChart {
     } catch(error) { output.textContent='Gabim: '+error.message; }
   }
 
-  destroy() {
-    this.finishTrendEdit(false, false);
-    this.calculationCache = null;
-    this.destroyed=true; this.state.requestId++;
-    this.infoRequestId++;
-    this.infoAbort?.abort();
-    clearTimeout(this.layoutTimer);
-    clearTimeout(this.saveTimer);
-    this.resizeObserver?.disconnect();
-    this.pointerCleanup?.();
-    this.infoDialog?.close();
-    this.infoDialog?.remove();
-    this.listeners.forEach(remove=>remove()); this.listeners=[];
-    this.svg.on('.zoom', null).on('dblclick.reset', null);
-    this.svg.on('.trends', null).on('.guard', null);
-    this.updateTrendLines = null;
-    this.trendDraft = null;
-    this.drawingTrend = false;
-    this.svg.on('contextmenu',null).on('mousemove',null).on('click',null);
-    this.setLoading(false);
+  // ===== Formatting ============================================================
+
+  // Rounding for display: two decimals, one decimal.
+  roundn(number) {
+    return Math.round((number + Number.EPSILON) * 100) / 100;
   }
 
-  // Legacy calculations and rendering follow, retained for parity testing.
-
-switchintervalix(v, vix) {
-    switch (v) {
-        case 'quave':
-            return vix.value = 0;
-            break;
-        case 'mave':
-            return vix.value = 240;
-            break;
-        case 'wave':
-            return vix.value = 60;
-            break;
-        case 'daily':
-            return vix.value = 12;
-            break;
-        default:
-            return vix.value;
-    }
-}
-
-// switch moving averages 
-SwMA(v, ldata, rdata) {
-    switch (v.toUpperCase()) {
-        case 'S':
-            return Indicators.SMA(ldata, rdata);
-            break;
-        case 'E':
-            return Indicators.EMA(ldata, rdata);
-            break;
-        case 'D':
-            return Indicators.DEMA(ldata, rdata);
-            break;
-        default:
-            return null;
-    }
-}
-// switch moving average symbol on legend
-SwMALegend(v) {
-    switch (v.toUpperCase()) {
-        case 'S':
-            return 'SMA';
-            break;
-        case 'E':
-            return 'EMA';
-            break;
-        case 'D':
-            return 'DEMA';
-            break;
-        default:
-            return null;
-    }
-}
-
-
-parseData(values, currency) {
-    let arr = [];
-    for (let i in values) {
-        arr.push({
-            date: new Date(values[i].Data),
-            value: +values[i][currency]
-        });
-    }
-    return arr;
-}
-
-// ---------------------------------------------------------------------------
-// Drawing. drawChart() builds the layout once and then draws the chart in parts,
-// in this order (the order of the SVG layers): frame and axes, price panel,
-// MACD panel, ROC / RSI / Stochastic panels, crosshair, trend lines and levels,
-// info markers, crossover signals, and finally zoom. Each part returns what the
-// zoom handler needs to update it.
-drawChart(values, currency) {
-    this.drawingTrend = Boolean(this.trendDraft);
-    const ctx = this.chartLayout(values, currency);
-    this.drawFrame(ctx);
-    const price = this.drawPricePanel(ctx);
-    const macd = this.drawMacdPanel(ctx);
-    const oscillators = this.drawOscillatorPanels(ctx);
-    const legends = [price.legend, macd.legend, ...oscillators.legends].filter(Boolean);
-    const hidePointer = this.drawCrosshair(ctx, legends);
-    const { svg, ddata, vdata, x, y, plotLeft, plotRight, margin, height, padding, interval } = ctx;
-    const priceBounds = { left: plotLeft, right: plotRight, top: margin.top, bottom: height - padding };
-    // draw trendlines
-    svg.append('g').attr('class', 'trend-viewport')
-        .attr('clip-path', `url(#${this.priceClipId})`).append('g')
-        .attr('class', 'trendlines');
-    svg.select('.trend-viewport').insert('g', '.trendlines').attr('class', 'levels');
-    svg.select('.trend-viewport').append('g').attr('class', 'trend-handles');
-    this.bindTrendLines(svg, ddata, x, y, priceBounds, currency, interval);
-    const updateInfoMarkers = this.drawInfoMarkers(svg, ddata, vdata, currency, interval, x, y, priceBounds);
-    const updateSignals = this.drawSignals(ctx);
-    this.setupZoom(ctx, {
-        panels: [price.update, macd.update, oscillators.update],
-        afterAxes: [price.updateOverlay, updateSignals, () => this.updateTrendLines(), updateInfoMarkers],
-        hidePointer
-    });
-}
-
-// Layout, scales and everything the drawing parts share.
-chartLayout(values, currency) {
-    const chart = this, svgvB = this.container, interval = this.state.interval;
-    const config = this.config;
-    const series = this.indicatorSeries(values);
-    const { macd, macdh, roc, rsi, stoch } = series.enabled;
-    const limdata = 50,
-        minwidth = 300, // screen
-        // Keep the original margin for ordinary FX prices; allow large XAU labels
-        // to show both decimal digits instead of clipping the final character.
-        margin = { top: 30, right: Math.max(60,
-            Math.max(formatFxNumber(series.min).length, formatFxNumber(series.max).length) * 6 + 14), bottom: 60 },
-        width = svgvB.offsetWidth - margin.right,
-        // Do not measure content height: it includes panels from the last render.
-        height = Math.max(minwidth, window.innerHeight * 0.55) - margin.top,
-        padding = 10,
-        indicator = { top: height, height: 90 },
-        ibottom = { bottom: indicator.top + indicator.height + padding };
-    const { ddata, MacdLine, MacdSignal, MacdHist, Roc } = series;
-    const xrx = (_d, i) => x(ddata[i]);
-    // MACD stays first. Only ROC / RSI / Stochastic follow their selection order.
-    const panels = [];
-    let panelTop = indicator.top;
-    const oscillatorPanels = (this.oscillatorOrder || ['roc', 'rsi'])
-        .map(key => [key, { roc, rsi, stoch }[key]]);
-    for (const [key, enabled] of [['macd', macd || macdh], ...oscillatorPanels]) {
-        if (!enabled) continue;
-        panels.push({ key, top: panelTop, bottom: panelTop + indicator.height + padding });
-        panelTop += indicator.height + padding * 2;
-    }
-    const panelByKey = Object.fromEntries(panels.map(panel => [panel.key, panel]));
-    const lowerBottom = panels.length ? panels[panels.length - 1].bottom : height - padding;
-    const dateY = panels.length ? lowerBottom + padding : height;
-
-    // Price-only bounds keep the scale stable when overlays are toggled.
-    let MinYScale = series.min,
-        MaxYScale = series.max,
-        PricePadding = MaxYScale > MinYScale
-            ? (MaxYScale - MinYScale) * 0.08
-            : Math.max(Math.abs(MinYScale) * 0.01, 0.01),
-        // scale MacdY
-        MinSignal = macd == true ? d3.min(...MacdSignal) : false,
-        MaxSignal = macd == true ? d3.max(...MacdSignal) : false,
-        MinLine = macd == true ? d3.min(...MacdLine) : false,
-        MaxLine = macd == true ? d3.max(...MacdLine) : false,
-        MinHist = macdh == true ? (typeof d3.min(...MacdHist) !== 'undefined' ? d3.min(...MacdHist) : null) : false,
-        MaxHist = macdh == true ? (typeof d3.max(...MacdHist) !== 'undefined' ? d3.max(...MacdHist) : null) : false,
-        MinMacdY = MinLine < MinSignal ? (MinLine < MinHist ? MinLine : MinHist) : (MinSignal < MinHist ? MinSignal : MinHist),
-        MaxMacdY = MaxLine > MaxSignal ? (MaxLine > MaxHist ? MaxLine : MaxHist) : (MaxSignal > MaxHist ? MaxSignal : MaxHist),
-        // scale ROC
-        MinRocY = roc == true ? (typeof d3.min(Roc) !== 'undefined' ? d3.min(Roc) : null) : false,
-        MaxRocY = roc == true ? (typeof d3.max(Roc) !== 'undefined' ? d3.max(Roc) : null) : false;
-
-    // x Axis format
-    let datalength = ddata.length,
-        format = { monthly: d3.timeFormat('%b %Y'), daily: d3.timeFormat('%d %b %Y') },
-        tformat = datalength < limdata ? format.daily : format.monthly;
-
-    // Tick labels need more decimals once zoom narrows the price range.
-    const priceDecimals = () => {
-        const [low, high] = y.domain(), span = Math.abs(high - low);
-        return span > 0 ? Math.min(4, Math.max(2, Math.ceil(-Math.log10(span / 8)))) : 2;
-    };
-    let yAxis = g => g
-        .attr('transform', 'translate(' + width + ', 0)')
-        .call(d3.axisRight(y)
-            .tickFormat(d3.format(',.' + priceDecimals() + 'f'))
-            .tickSizeOuter(0));
-
-    let xAxis = g => g
-        .attr('transform', 'translate(0,' + dateY + ')')
-        .call(d3.axisBottom(x)
-            .tickSizeOuter(0)
-            .tickValues(visibleTicks())
-            .tickFormat(date => (datalength / (chart.zoomTransform?.k || 1) < limdata ? format.daily : tformat)(date)));
-
-    let x = d3.scalePoint()
-        .domain(ddata)
-        .range([width < minwidth ? width + margin.right - padding : width - padding, padding]);
-    const baseRange = x.range().slice();
-    this.zoomTransform = this.resizeZoom(baseRange);
-    const plotLeft = Math.min(...baseRange), plotRight = Math.max(...baseRange);
-    // Invert by observation index, not elapsed time (weekends remain gap-free).
-    x.invert = pixel => {
-        const range = x.range();
-        const index = datalength < 2 ? 0 : Math.round((pixel - range[0]) / (range[1] - range[0]) * (datalength - 1));
-        return ddata[Math.max(0, Math.min(datalength - 1, index))];
-    };
-    function visibleTicks() {
-        const visible = Array.from(ddata).filter(date => x(date) >= plotLeft - 0.5 && x(date) <= plotRight + 0.5);
-        const step = Math.max(1, Math.ceil(visible.length / Math.max(2, Math.floor((plotRight - plotLeft) / 140))));
-        return visible.filter((_d, i) => i % step === 0);
-    }
-
-    let y = d3.scaleLinear()
-        .domain([MinYScale - PricePadding, MaxYScale + PricePadding])
-        .range([height - padding, margin.top]);
-    const baseY = y.copy(), priceHeight = height - padding - margin.top;
-    this.pricePan = Number.isFinite(this.pricePan) ? this.pricePan : 0;
-    const applyPricePan = () => {
-        // Same rescaleY mechanism as chart.js, with k fixed at 1: translate only.
-        y.domain(d3.zoomIdentity.translate(0, chart.pricePan * priceHeight).rescaleY(baseY).domain());
-    };
-    applyPricePan();
-    this.plotGeometry = { x: baseRange.slice(), y: y.range().slice() };
-    this.panelGeometry = [{ key: 'price', top: margin.top, bottom: height - padding }, ...panels];
-
-    // MACD
-    let yMAxis = g => g
-        .attr('transform', 'translate(' + width + ', 0)')
-        .call(d3.axisRight(yMacd).ticks(3).tickSizeOuter(0));
-
-    let yMacd = d3.scaleLinear()
-        .domain([MinMacdY, MaxMacdY])
-        .range([ibottom.bottom, indicator.top])
-        .nice();
-
-    // ROC
-    let yRCAxis = g => g
-        .attr('transform', 'translate(' + width + ', 0)')
-        .call(d3.axisRight(yRoc).ticks(3).tickSizeOuter(0));
-
-    // RSI
-    let yRAxis = g => g
-        .attr('transform', 'translate(' + width + ', 0)')
-        .call(d3.axisRight(yRsi).ticks(3).tickSizeOuter(0));
-
-    let yRoc = d3.scaleLinear()
-        .domain([MinRocY, MaxRocY])
-        .range([panelByKey.roc?.bottom ?? ibottom.bottom, panelByKey.roc?.top ?? indicator.top])
-        .nice();
-
-    let yRsi = d3.scaleLinear()
-        .domain([0, 100])
-        .range([panelByKey.rsi?.bottom ?? ibottom.bottom, panelByKey.rsi?.top ?? indicator.top])
-        .nice();
-    // Stochastic
-    let yStoch = d3.scaleLinear()
-        .domain([0, 100])
-        .range([panelByKey.stoch?.bottom ?? ibottom.bottom, panelByKey.stoch?.top ?? indicator.top]);
-
-    let ySTAxis = g => g
-        .attr('transform', 'translate(' + width + ', 0)')
-        .call(d3.axisRight(yStoch).tickValues([20, 50, 80]).tickSizeOuter(0));
-
-    this.plotScales = { x, y, ...(macd || macdh ? { macd: yMacd } : {}),
-        ...(roc ? { roc: yRoc } : {}), ...(rsi ? { rsi: yRsi } : {}), ...(stoch ? { stoch: yStoch } : {}) };
-
-    const svg = this.svg;
-    const roundn = this.roundn.bind(this);
-    const ctx = {
-        chart, svg, currency, interval, config, series, ...series, enabled: series.enabled,
-        macd, macdh, roc, rsi, stoch, xrx, datalength,
-        margin, width, height, padding, indicator, panels, panelByKey, lowerBottom, dateY,
-        x, y, baseY, baseRange, plotLeft, plotRight, priceHeight, applyPricePan, visibleTicks,
-        xAxis, yAxis, yMacd, yMAxis, yRoc, yRCAxis, yRsi, yRAxis, yStoch, ySTAxis,
-        macdhbinsl: 1500, macdhbinsm: 900,
-        // indicator colors
-        colors: {
-            price: '#38678f',
-            mca: series.MA_a != 0 ? '#e04b4b' : '',
-            mcb: series.MA_b != 0 ? '#00b061' : '',
-            mcc: series.MA_c != 0 ? '#ff7dcd' : '',
-            mcd: series.MA_d != 0 ? '#a39354' : '',
-            ubbc: series.UpperBand != 0 ? '#909090' : '',
-            lbbc: series.LowerBand != 0 ? '#909090' : '',
-            macdsc: MacdSignal != 0 ? '#ff8084' : '',
-            macdlc: MacdLine != 0 ? '#0061cb' : '',
-            macdhc: MacdHist != 0 ? '#907070' : '',
-            macdhcp: MacdHist != 0 ? '#708070' : '',
-            macdhistlegc: MacdHist != 0 ? '#808080' : '',
-            rocc: Roc != 0 ? '#f28f3b' : '',
-            rsic: series.Rsi != 0 ? '#505050' : '',
-            stochkc: '#7a5fc0',
-            stochdc: '#c9a227',
-            signalup: '#00b061',
-            signaldown: '#e04b4b'
-        },
-        intervalTag: interval == 'wave' ? '(W)' : (interval == 'mave' ? '(M)' : (interval == 'quave' ? '(Q)' : '(D)')),
-        pointerFormat: value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—',
-        hrLines: []
-    };
-    // Horizontal reference line (zero, 30 / 70, 20 / 80) across the whole plot.
-    ctx.hr = (value, yscale, color, swd) => {
-        let dateRange = [d3.max(ddata), d3.min(ddata)];
-        const xs = dateRange.map(date => x(date)); // full plot width, independent of zoom
-        const path = svg.append('g')
-            .attr('stroke-width', 0.3)
-            .selectAll('path')
-            .data([[value, value]])
-            .join('path')
-            .attr('stroke', color)
-            .attr('stroke-width', swd);
-        const place = () => path.attr('d', d3.line().x((_d, i) => xs[i]).y(() => yscale(value)));
-        place();
-        ctx.hrLines.push(place);
-    };
-    // Legend entries side by side on wide screens, stacked otherwise.
-    ctx.stackLegend = selection => {
-        let offset = 0;
-        const wide = svgvB.offsetWidth > 1050;
-        selection.attr('transform', function () {
-            const at = offset;
-            offset += wide ? this.getBBox().width + 23 : this.getBBox().height + 1;
-            return wide ? 'translate(' + at + ', 0)' : 'translate(0, ' + at + ')';
-        });
-    };
-    return ctx;
-}
-
-// SVG frame: size, price clip and the two main axes.
-drawFrame(ctx) {
-    const { svg, x, margin, width, height, padding, dateY, xAxis, yAxis } = ctx;
-    svg
-        // Cursor: a dot while the crosshair is on, the default arrow when it is off,
-        // and a grabbing hand while the chart is dragged (see css.css).
-        .classed('crosshair-on', Boolean(this.config.cross))
-        .classed('panning', false)
-        .attr('preserveAspectRatio', 'xMinYMin meet')
-        .attr('viewBox', '0 0 ' + (width + margin.right) + ' ' + (dateY + margin.top));
-
-    svg.append('defs').append('clipPath')
-        .attr('id', this.priceClipId)
-        .attr('clipPathUnits', 'userSpaceOnUse')
-        .append('rect')
-        .attr('x', Math.min(...x.range()))
-        .attr('y', margin.top)
-        .attr('width', Math.abs(x.range()[1] - x.range()[0]))
-        .attr('height', Math.max(0, height - padding - margin.top));
-
-    svg.append('g')
-        .attr('class', 'date-axis')
-        .call(xAxis)
-        .attr('text-anchor', 'start');
-
-    svg.append('g')
-        .attr('class', 'price-axis')
-        .call(yAxis);
-}
-
-// Price panel: grid, latest price, Bollinger area, price and overlay lines, legend.
-drawPricePanel(ctx) {
-    const { svg, x, y, xrx, vdata, ddata, BandData, LowerBand, UpperBand, MA_a, MA_b, MA_c, MA_d,
-        config, currency, colors, intervalTag, margin, width, height, padding, plotLeft, plotRight,
-        lowerBottom, visibleTicks, yAxis } = ctx;
-    const { ma_a, ma_b, ma_c, ma_d, mma_a, mma_b, mma_c, mma_d } = config;
-    const { price, mca, mcb, mcc, mcd, ubbc, lbbc } = colors;
-    const SwMALegend = this.SwMALegend.bind(this), roundn = this.roundn.bind(this);
-    const bband = ctx.enabled.bband;
-
-    let line = d3.line()
-        .defined(Number.isFinite)
-        .x(xrx)
-        .y(y);
-
-    // Grid lines follow the axis ticks, so they are redrawn on zoom and pan.
-    const gridLayer = svg.append('g').attr('class', 'price-grid').attr('pointer-events', 'none');
-    const drawGrid = () => {
-        gridLayer.selectAll('line.grid-h')
-            .data(y.ticks().filter(tick => y(tick) >= margin.top && y(tick) <= height - padding))
-            .join('line').attr('class', 'grid-h')
-            .attr('x1', plotLeft).attr('x2', plotRight)
-            .attr('y1', tick => Math.round(y(tick)) + 0.5).attr('y2', tick => Math.round(y(tick)) + 0.5);
-        gridLayer.selectAll('line.grid-v').data(visibleTicks())
-            .join('line').attr('class', 'grid-v')
-            .attr('x1', date => Math.round(x(date)) + 0.5).attr('x2', date => Math.round(x(date)) + 0.5)
-            .attr('y1', margin.top).attr('y2', lowerBottom);
-    };
-
-    // Latest price: dashed guide plus a tag on the price axis.
-    const lastPrice = svg.append('g').attr('class', 'last-price').attr('pointer-events', 'none');
-    lastPrice.append('line').attr('x1', plotLeft).attr('x2', plotRight)
-        .attr('stroke', price).attr('stroke-width', 0.75).attr('stroke-dasharray', '2 3');
-    const lastTag = lastPrice.append('g').attr('transform', 'translate(' + width + ',0)');
-    lastTag.append('rect').attr('x', 1).attr('y', -9).attr('height', 18).attr('rx', 2)
-        .attr('width', Math.max(0, margin.right - 2)).attr('fill', price);
-    lastTag.append('text').attr('x', 9).attr('dy', '0.32em').attr('fill', '#fff').text(formatFxNumber(vdata[0]));
-    const updateLastPrice = () => {
-        const py = y(vdata[0]);
-        lastPrice.attr('display', py >= margin.top && py <= height - padding ? null : 'none')
-            .attr('transform', 'translate(0,' + py + ')');
-    };
-
-    // bollinger band area
-    const bandArea = () => d3.area().x(xrx)
-        .y0((_d, i) => y(BandData[i].high)).y1((_d, i) => y(BandData[i].low));
-    if (bband) {
-        svg.append('g')
-            .attr('class', 'abbc')
-            .attr('clip-path', `url(#${this.priceClipId})`)
-            .selectAll('path')
-            .data([BandData])
-            .join('path')
-            .attr('d', bandArea());
-    }
-
-    svg.append('g')
-        .attr('fill', 'none')
-        .attr('class', 'dline')
-        .attr('clip-path', `url(#${this.priceClipId})`)
-        .attr('stroke-linejoin', 'round')
-        .attr('stroke-linecap', 'round')
-        .attr('stroke-width', 1)
-        .selectAll('path')
-        .data([vdata, MA_a, MA_b, MA_c, MA_d, LowerBand, UpperBand])
-        .join('path')
-        .attr('stroke', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc][i])
-        .attr('d', line);
-
-    // Legend text: the latest values, or the values at the crosshair date.
-    const legendText = (date, value, fd, maValue) => (_d, i) => {
-        const ma = (data, kind, period, v) => !isNaN(data[0]) ? SwMALegend(kind) + period + ': ' + fd(v) : '';
-        return [
-            d3.timeFormat('%a, %d %b %Y')(date) + ', ' + currency + '/ALL: ' + fd(value) + ' ' + intervalTag,
-            ma(MA_a, mma_a, ma_a, maValue.MA_a), ma(MA_b, mma_b, ma_b, maValue.MA_b),
-            ma(MA_c, mma_c, ma_c, maValue.MA_c), ma(MA_d, mma_d, ma_d, maValue.MA_d),
-            !isNaN(UpperBand[0]) ? 'Upper Band: ' + fd(maValue.UpperBand) : '',
-            !isNaN(LowerBand[0]) ? 'Lower Band: ' + fd(maValue.LowerBand) : ''
-        ].filter(x => x !== '')[i];
-    };
-    const latest = legendText(ddata[0], vdata[0], formatFxNumber, {
-        MA_a: roundn(MA_a[0]), MA_b: roundn(MA_b[0]), MA_c: roundn(MA_c[0]), MA_d: roundn(MA_d[0]),
-        UpperBand: UpperBand[0], LowerBand: LowerBand[0]
-    });
-
-    const legend = svg.append('g')
-        .attr('class', 'legend')
-        .attr('transform', 'translate(' + padding + ',' + margin.top + ')');
-
-    const lg = legend.selectAll('g')
-        .data([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand].filter(x => x != 0 || !isNaN(x)))
-        .join('g')
-        .append('text')
-        .style('fill', (_d, i) => [price, mca, mcb, mcc, mcd, ubbc, lbbc].filter(x => x !== '')[i]);
-
-    lg.text(latest);
-    ctx.stackLegend(lg);
-
-    return {
-        legend: {
-            reset: () => lg.text(latest),
-            show: snapshot => lg.text(legendText(snapshot.date, snapshot.values.vdata, formatFxNumber, snapshot.values))
-        },
-        // Lines that follow the price scale; called after the price pan is applied.
-        update: () => {
-            svg.select('.price-axis').call(yAxis);
-            svg.select('.dline').selectAll('path').attr('d', line);
-            svg.select('.abbc').selectAll('path').attr('d', bandArea());
-        },
-        updateOverlay: () => { drawGrid(); updateLastPrice(); }
-    };
-}
-
-// MACD panel: histogram, MACD and signal lines, zero line, legend.
-drawMacdPanel(ctx) {
-    const { svg, xrx, yMacd, yMAxis, MacdLine, MacdSignal, MacdHist, macd, macdh, colors,
-        datalength, macdhbinsl, macdhbinsm, padding, indicator, pointerFormat } = ctx;
-    if (!(macd || macdh)) return { update: () => {} };
-    const { macdlc, macdsc, macdhc, macdhcp, macdhistlegc } = colors;
-    const roundn = this.roundn.bind(this);
-    svg.append('g')
-        .attr('class', 'macd-axis')
-        .call(yMAxis);
-
-    if (macdh) {
-        svg.append('g')
-            .attr('class', 'zoom-histogram')
-            .selectAll('rect')
-            .data(...MacdHist)
-            .join('rect')
-            .attr('class', 'macdhc')
-            .attr('x', xrx)
-            .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
-            .attr('height', d => Math.abs(yMacd(d) - yMacd(0)))
-            .attr('width', (datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5)))
-            .attr('transform', 'translate(' + (datalength > macdhbinsl ? -1 : (datalength > macdhbinsm ? -1.5 : -2)) + ', 0)')
-            .attr('fill', d => { return d > 0 ? macdhcp : macdhc });
-    }
-
-    const macdLine = () => d3.line().defined(Number.isFinite).x(xrx).y(yMacd);
-    if (macd) {
-        svg.append('g')
-            .attr('class', 'zoom-macd')
-            .attr('fill', 'none')
-            .attr('stroke-linejoin', 'round')
-            .attr('stroke-linecap', 'round')
-            .attr('stroke-width', 1)
-            .selectAll('path')
-            .data([...MacdLine, ...MacdSignal])
-            .join('path')
-            .attr('stroke', (_d, i) => {
-                return [macdlc, macdsc][i];
-            })
-            .attr('d', macdLine());
-    }
-
-    ctx.hr(0, yMacd, '#808080', 0.3);
-
-    // Legend text: the latest values, or the values at the crosshair date.
-    const legendText = (line, signal, histogram, fd) => (_d, i) => [
-        macd ? 'MACD Line: ' + fd(line) : 0,
-        macd ? 'MACD Signal: ' + fd(signal) : 0,
-        macdh ? 'MACD Histogram: ' + fd(histogram) : 0
-    ].filter(x => x != 0)[i];
-    const latestFormat = value => d3.format(',')(roundn(value));
-    const latest = legendText(macd ? MacdLine[0][0] : 0, macd ? MacdSignal[0][0] : 0, macdh ? MacdHist[0][0] : 0, latestFormat);
-
-    const macdlegend = svg.append('g')
-        .attr('class', 'macdlegend')
-        .attr('transform', 'translate(' + padding + ',' + indicator.top + ')');
-
-    const macdlg = macdlegend.selectAll('g')
-        .data([MacdLine, MacdSignal, MacdHist])
-        .join('g')
-        .append('text')
-        .style('fill', (_d, i) => [macdlc, macdsc, macdhistlegc].filter(x => x !== '')[i]);
-
-    macdlg.text(latest);
-    ctx.stackLegend(macdlg);
-
-    return {
-        legend: {
-            reset: () => macdlg.text(latest),
-            show: ({ values }) => macdlg.text(legendText(values.MacdLine, values.MacdSignal, values.MacdHist, pointerFormat))
-        },
-        update: () => {
-            svg.select('.zoom-macd').selectAll('path').attr('d', macdLine());
-            // Bar width follows the spacing between points (never thinner than the
-            // original bins), so zooming in widens the bars instead of leaving lines.
-            const { x, ddata } = ctx;
-            const histStep = datalength > 1 ? Math.abs(x(ddata[1]) - x(ddata[0])) : 0;
-            const histWidth = Math.max(datalength > macdhbinsl ? 0.5 : (datalength > macdhbinsm ? 1 : 1.5), Math.min(histStep * 0.7, 14));
-            svg.select('.zoom-histogram').selectAll('rect').attr('transform', null)
-                .attr('width', histWidth).attr('x', (d, i) => xrx(d, i) - histWidth / 2)
-                .attr('y', d => d > 0 ? yMacd(d) : yMacd(0))
-                .attr('height', d => Math.abs(yMacd(d) - yMacd(0)));
-            svg.select('.macd-axis').call(yMAxis);
-        }
-    };
-}
-
-// ROC, RSI and Stochastic panels, each with its reference lines and legend.
-drawOscillatorPanels(ctx) {
-    const { svg, xrx, yRoc, yRCAxis, yRsi, yRAxis, yStoch, ySTAxis, Roc, Rsi, StochK, StochD,
-        roc, rsi, stoch, colors, padding, panelByKey, config } = ctx;
-    const { rocc, rsic, stochkc, stochdc } = colors;
-    const roundn = this.roundn.bind(this);
-    const oscLine = scale => d3.line().defined(Number.isFinite).x(xrx).y(scale);
-    const draw = (key, scale, axis, data, strokes) => {
-        svg.append('g')
-            .attr('class', key + '-axis')
-            .call(axis);
-        svg.append('g')
-            .attr('class', 'zoom-' + key)
-            .attr('fill', 'none')
-            .attr('stroke-linejoin', 'round')
-            .attr('stroke-linecap', 'round')
-            .attr('stroke-width', 1)
-            .selectAll('path')
-            .data(data)
-            .join('path')
-            .attr('stroke', (_d, i) => strokes[i])
-            .attr('d', oscLine(scale));
-    };
-    // ROC
-    if (roc) {
-        draw('roc', yRoc, yRCAxis, [Roc], [rocc]);
-        ctx.hr(0, yRoc, '#f28f3b', 0.3);
-    }
-    // RSI
-    if (rsi) {
-        draw('rsi', yRsi, yRAxis, [Rsi], [rsic]);
-        ctx.hr(30, yRsi, '#808080', 0.3);
-        ctx.hr(70, yRsi, '#808080', 0.3);
-    }
-    // Stochastic (closing prices only: the source has no high / low).
-    if (stoch) {
-        draw('stoch', yStoch, ySTAxis, [StochK, StochD], [stochkc, stochdc]);
-        ctx.hr(20, yStoch, '#808080', 0.3);
-        ctx.hr(80, yStoch, '#808080', 0.3);
-    }
-
-    const oscFormat = value => Number.isFinite(value) ? d3.format(',')(roundn(value)) : '—';
-    const oscText = {
-        roc: i => 'ROC: ' + oscFormat(Roc[i]),
-        rsi: i => 'RSI: ' + oscFormat(Rsi[i]),
-        stoch: i => 'Stoch' + config.ST + ' %K: ' + oscFormat(StochK[i]) + ', %D: ' + oscFormat(StochD[i])
-    };
-    const legends = [];
-    for (const [key, enabled, color] of [['roc', roc, rocc], ['rsi', rsi, rsic], ['stoch', stoch, stochkc]]) {
-        if (!enabled) continue;
-        const text = svg.append('g')
-            .attr('class', 'rsrclegend ' + key + 'legend')
-            .attr('transform', 'translate(' + padding + ',' + panelByKey[key].top + ')')
-            .append('g').append('text').style('fill', color);
-        text.text(() => oscText[key](0));
-        ctx.stackLegend(text);
-        legends.push({
-            reset: () => text.text(oscText[key](0)),
-            show: snapshot => text.text(oscText[key](snapshot.index))
-        });
-    }
-    return {
-        legends,
-        update: () => {
-            svg.select('.zoom-roc').selectAll('path').attr('d', oscLine(yRoc));
-            svg.select('.zoom-rsi').selectAll('path').attr('d', oscLine(yRsi));
-            svg.select('.zoom-stoch').selectAll('path').attr('d', oscLine(yStoch));
-            svg.select('.roc-axis').call(yRCAxis);
-        }
-    };
-}
-
-// Crosshair: lines, tags on the axes, pointer hit areas and the legends it drives.
-// Returns hidePointer().
-drawCrosshair(ctx, legends) {
-    const chart = this;
-    const { svg, x, y, yMacd, yRoc, yRsi, yStoch, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
-        MacdLine, MacdSignal, MacdHist, Roc, Rsi, StochK, StochD, macd, macdh, interval,
-        margin, width, padding, indicator, panelByKey, plotLeft, plotRight, lowerBottom, dateY, pointerFormat } = ctx;
-    const roundx = this.roundx.bind(this);
-    let crssh = svg.append('g').attr('class', 'chart-crosshair').attr('pointer-events', 'none'),
-        crosshair = crssh.append('g')
-            .attr('stroke-width', 0.5);
-
-    // The value goes on the price axis and the date on the date axis,
-    // so nothing is drawn next to (or under) the cursor or the finger.
-    const axisTag = (width, anchor) => {
-        const tag = crssh.append('g').style('display', 'none');
-        tag.append('rect').attr('height', 18).attr('rx', 2).attr('y', anchor).attr('fill', '#5b6270');
-        tag.append('text').attr('dy', '0.32em').attr('y', anchor + 9).attr('fill', '#fff');
-        return tag;
-    };
-    const axisY = axisTag(0, -9), axisX = axisTag(0, 3);
-    axisY.select('rect').attr('x', 1).attr('width', Math.max(0, margin.right - 2));
-    axisY.select('text').attr('x', 9);
-    axisX.select('rect').attr('x', -40).attr('width', 80);
-    axisX.select('text').attr('text-anchor', 'middle');
-    const axisDate = d3.timeFormat(interval === 'mave' || interval === 'quave' ? '%b %Y' : '%d %b %Y');
-
-    // vertical line
-    crosshair.append('line')
-        .attr('id', 'crsx')
-        .attr('stroke', '#cdcdcd');
-
-    // horizontal line
-    crosshair.append('line')
-        .attr('id', 'crsy')
-        .attr('stroke', '#cdcdcd');
-
-    // grid
-    svg.append('rect')
-        .attr('class', 'grid')
-        .attr('fill', 'none')
-        .attr('pointer-events', 'all')
-        .attr('x', padding)
-        .attr('y', margin.top)
-        .attr('width', x.range()[0] - padding)
-        .attr('height', y.range()[0] - margin.top);
-
-    // macd grid
-    if (macd || macdh) {
-        svg.append('rect')
-            .attr('class', 'macdgrid')
-            .attr('fill', 'none')
-            .attr('pointer-events', 'all')
-            .attr('x', padding)
-            .attr('y', indicator.top)
-            .attr('width', x.range()[0] - padding)
-            .attr('height', yMacd.range()[0] - indicator.top);
-    }
-
-    // Separate ROC, RSI and Stochastic hit areas; all panels share the same date pointer.
-    for (const key of ['roc', 'rsi', 'stoch']) {
-        const panel = panelByKey[key];
-        if (!panel) continue;
-        svg.append('rect')
-            .attr('class', 'rsrcgrid ' + key + 'grid')
-            .attr('fill', 'none')
-            .attr('pointer-events', 'all')
-            .attr('x', padding)
-            .attr('y', panel.top)
-            .attr('width', x.range()[0] - padding)
-            .attr('height', panel.bottom - panel.top);
-    }
-
-    function hidePointer() {
-        chart.state.pointerIndex = null;
-        crosshair.style('display', 'none');
-        axisY.style('display', 'none');
-        axisX.style('display', 'none');
-        legends.forEach(legend => legend.reset());
-    }
-    const pointerSeries = {
-        vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
-        MacdLine: macd ? MacdLine[0] : null,
-        MacdSignal: macd ? MacdSignal[0] : null,
-        MacdHist: macdh ? MacdHist[0] : null, Roc, Rsi, StochK, StochD
-    };
-    function paintPointer(event) {
-        const [rawX, yval] = d3.pointer(event, svg.node());
-        const panel = chart.panelGeometry.find(item => yval >= item.top && yval <= item.bottom)?.key;
-        if (!panel || rawX < plotLeft || rawX > plotRight) { hidePointer(); return; }
-        const snapshot = chart.pointerSnapshot(rawX, ddata, x.range(), [plotLeft, plotRight], pointerSeries);
-        if (!snapshot) { hidePointer(); return; }
-        chart.state.pointerIndex = snapshot.index;
-        const xval = snapshot.x, yVonx = snapshot.values;
-        crosshair.style('display', null);
-
-        // Value at the pointer height, used where no series has a value.
-        function linelabel() {
-            let fd = d3.format(',');
-            switch (panel) {
-                case 'roc': return roundx(yRoc.invert(yval));
-                case 'rsi': return roundx(yRsi.invert(yval));
-                case 'stoch': return roundx(Math.max(0, Math.min(100, yStoch.invert(yval))));
-                case 'macd': return fd(roundx(yMacd.invert(yval)));
-                default: return d3.format(',.2f')(y.invert(yval));
-            }
-        }
-
-        // vertical line
-        crosshair.select('#crsx')
-            .attr('x1', xval)
-            .attr('y1', margin.top)
-            .attr('x2', xval)
-            .attr('y2', lowerBottom);
-
-        // Like the vertical line snaps to the date, the horizontal line snaps to a
-        // series value at that date. In panels with several lines (MACD line, signal,
-        // histogram; Stochastic %K, %D; price and its overlays) it takes the one
-        // closest to the pointer.
-        // Where no series has a value (an indicator still warming up) it keeps the
-        // pointer's own height.
-        const oscillator = value => d3.format(',')(roundx(value));
-        const candidates = ({
-            // Price plus every overlay that is drawn (moving averages, Bollinger bands).
-            price: [yVonx.vdata, yVonx.MA_a, yVonx.MA_b, yVonx.MA_c, yVonx.MA_d,
-                    yVonx.UpperBand, yVonx.LowerBand].map(value => [value, y, formatFxNumber]),
-            macd: [[macd ? yVonx.MacdLine : null, yMacd, pointerFormat],
-                   [macd ? yVonx.MacdSignal : null, yMacd, pointerFormat],
-                   [macdh ? yVonx.MacdHist : null, yMacd, pointerFormat]],
-            roc: [[yVonx.Roc, yRoc, oscillator]],
-            rsi: [[yVonx.Rsi, yRsi, oscillator]],
-            stoch: [[yVonx.StochK, yStoch, oscillator], [yVonx.StochD, yStoch, oscillator]]
-        })[panel] || [];
-        let target = null, distance = Infinity;
-        for (const candidate of candidates) {
-            if (!Number.isFinite(candidate[0])) continue;
-            const gap = Math.abs(candidate[1](candidate[0]) - yval);
-            if (gap < distance) { distance = gap; target = candidate; }
-        }
-        const snapped = target !== null;
-        const panelBox = chart.panelGeometry.find(item => item.key === panel);
-        const lineY = snapped ? Math.max(panelBox.top, Math.min(panelBox.bottom, target[1](target[0]))) : yval;
-        const valueText = snapped ? target[2](target[0]) : linelabel();
-
-        // horizontal line
-        crosshair.select('#crsy')
-            .attr('x1', plotLeft)
-            .attr('y1', lineY)
-            .attr('x2', plotRight)
-            .attr('y2', lineY);
-
-        axisY.style('display', null)
-            .attr('transform', 'translate(' + width + ',' + lineY + ')')
-            .select('text').text(valueText);
-        axisX.style('display', null)
-            .attr('transform', 'translate(' + Math.max(39, Math.min(width + margin.right - 39, xval)) + ',' + dateY + ')')
-            .select('text').text(axisDate(snapshot.date));
-
-        legends.forEach(legend => legend.show(snapshot));
-    }
-    hidePointer();
-    this.bindChartPointer(svg, paintPointer, hidePointer);
-    return hidePointer;
-}
-
-// Crossover signals. With two or more moving averages the first two are
-// compared (shorter period = fast line); with one, price against it.
-// Returns the function that places them after zoom.
-drawSignals(ctx) {
-    const chart = this;
-    const { svg, x, y, yMacd, ddata, vdata, MA_a, MA_b, MA_c, MA_d, MacdCross, macd, macdh,
-        config, colors, margin, height, padding, plotLeft, plotRight, panelByKey } = ctx;
-    const { ma_a, ma_b, ma_c, ma_d } = config;
-    let updateSignals = () => {};
-    if (config.signals) {
-        const averages = [[MA_a, ma_a], [MA_b, ma_b], [MA_c, ma_c], [MA_d, ma_d]]
-            .filter(([data]) => data && data.length > 1).slice(0, 2).sort((p, q) => p[1] - q[1]);
-        const fast = averages.length === 2 ? averages[0][0] : (averages.length === 1 ? vdata : null);
-        const slow = averages.length ? averages[averages.length - 1][0] : null;
-        const marks = [
-            ...chart.crossings(fast, slow).map(mark => ({ ...mark, value: fast[mark.index], scale: y, panel: 'price' })),
-            // A MACD / signal crossover is where the histogram crosses zero. With the
-            // lines hidden the marker sits on that zero line instead of on a line that is not drawn.
-            ...((macd || macdh) && MacdCross ? chart.crossings(MacdCross.line, MacdCross.signal)
-                .map(mark => ({ ...mark, value: macd ? MacdCross.line[mark.index] : 0, scale: yMacd, panel: 'macd' })) : [])
-        ];
-        const triangle = d3.symbol().type(d3.symbolTriangle).size(34)();
-        const layer = svg.append('g').attr('class', 'signals').attr('pointer-events', 'none');
-        const nodes = layer.selectAll('path').data(marks).join('path').attr('d', triangle)
-            .attr('fill', mark => mark.up ? colors.signalup : colors.signaldown)
-            .attr('clip-path', mark => 'url(#' + chart.priceClipId + (mark.panel === 'price' ? '' : '-' + mark.panel) + '-marks)');
-        // Clip the unrotated wrapper, not the rotated symbol.
-        nodes.each(function () {
-            const wrapper = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            wrapper.setAttribute('clip-path', this.getAttribute('clip-path'));
-            this.removeAttribute('clip-path');
-            this.parentNode.insertBefore(wrapper, this); wrapper.appendChild(this);
-        });
-        // Markers in a crowded panel hide on their own; zooming in brings them back.
-        updateSignals = () => {
-            const limit = Math.max(10, Math.floor((plotRight - plotLeft) / 14));
-            const visible = { price: 0, macd: 0 };
-            for (const mark of marks) {
-                mark.px = x(ddata[mark.index]);
-                if (mark.px >= plotLeft && mark.px <= plotRight) visible[mark.panel]++;
-            }
-            const crowded = panel => visible[panel] > limit;
-            nodes.attr('display', mark => crowded(mark.panel) ? 'none' : null)
-                .attr('transform', mark => 'translate(' + mark.px + ',' + (mark.scale(mark.value) + (mark.up ? 9 : -9)) + ')' + (mark.up ? '' : ' rotate(180)'));
-        };
-    }
-    const markClip = (suffix, top, bottom) => svg.select('defs').append('clipPath').attr('id', chart.priceClipId + suffix + '-marks')
-        .append('rect').attr('x', plotLeft).attr('y', top).attr('width', plotRight - plotLeft).attr('height', Math.max(0, bottom - top));
-    markClip('', margin.top, height - padding);
-    if (panelByKey.macd) markClip('-macd', panelByKey.macd.top, panelByKey.macd.bottom);
-    return updateSignals;
-}
-
-// Zoom and pan. Only geometry is updated during gestures; indicator values stay
-// calculated from the loaded history, so zoom does not restart their warm-up.
-setupZoom(ctx, { panels: panelUpdates, afterAxes, hidePointer }) {
-    const chart = this;
-    const { svg, x, y, baseY, baseRange, ddata, vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand,
-        MacdLine, MacdSignal, MacdHist, Roc, macd, macdh, roc, yMacd, yRoc, datalength,
-        margin, height, padding, panels, plotLeft, plotRight, priceHeight, applyPricePan, xAxis } = ctx;
-    for (const panel of panels) {
-        const clipId = this.priceClipId + '-' + panel.key;
-        svg.select('defs').append('clipPath').attr('id', clipId)
-            // 2px of room on each side: a line resting exactly on a limit (closing-price
-            // Stochastic often sits on 0 or 100) is not cut in half by the clip.
-            .append('rect').attr('x', plotLeft).attr('y', panel.top - 2)
-            .attr('width', plotRight - plotLeft).attr('height', panel.bottom - panel.top + 4);
-        svg.selectAll(panel.key === 'macd' ? '.zoom-macd, .zoom-histogram' : '.zoom-' + panel.key)
-            .attr('clip-path', `url(#${clipId})`);
-    }
-    const extent = [[plotLeft, margin.top], [plotRight, height - padding]];
-    const maxZoom = Math.max(1, Math.min(100, (datalength - 1) / 9));
-    const constrain = transform => {
-        const k = Math.max(1, Math.min(maxZoom, transform.k));
-        const tx = Math.max(plotRight * (1 - k), Math.min(plotLeft * (1 - k), transform.x));
-        return d3.zoomIdentity.translate(tx, Number.isFinite(transform.y) ? transform.y : 0).scale(k);
-    };
-    // Limit the translation to useful space, including any clipped enabled overlays.
-    let minPan = -0.25, maxPan = 0.25;
-    // Y scales follow the visible part of the data, so zooming in on a quiet
-    // stretch is not drawn as a flat line on a scale made for the whole history.
-    const visibleIndices = () => {
-        const range = x.range(), last = datalength - 1;
-        if (last < 1) return [0, Math.max(0, last)];
-        const step = (range[1] - range[0]) / last;
-        const a = (plotLeft - range[0]) / step, b = (plotRight - range[0]) / step;
-        // One extra point on each side lets lines run to the plot edge.
-        const low = Math.max(0, Math.ceil(Math.min(a, b) - 1e-9) - 1);
-        const high = Math.min(last, Math.floor(Math.max(a, b) + 1e-9) + 1);
-        return low <= high ? [low, high] : [0, last];
-    };
-    const extentOf = (seriesList, low, high, include) => {
-        let min = include ?? Infinity, max = include ?? -Infinity;
-        for (const series of seriesList) {
-            if (!series) continue;
-            for (let i = low, end = Math.min(high, series.length - 1); i <= end; i++) {
-                const value = series[i];
-                if (Number.isFinite(value)) { if (value < min) min = value; if (value > max) max = value; }
-            }
-        }
-        return [min, max];
-    };
-    const fitDomain = (scale, [min, max], pad = 0) => {
-        if (!Number.isFinite(min) || !Number.isFinite(max)) return;
-        if (!(max > min)) { const gap = Math.max(Math.abs(min) * 0.01, 0.01); min -= gap; max += gap; }
-        scale.domain([min - (max - min) * pad, max + (max - min) * pad]);
-    };
-    const autoscale = () => {
-        const [low, high] = visibleIndices();
-        // Price only: overlays toggled on or off must not move the price scale.
-        fitDomain(baseY, extentOf([vdata], low, high), 0.08);
-        const visiblePlotted = extentOf([vdata, MA_a, MA_b, MA_c, MA_d, UpperBand, LowerBand], low, high);
-        if (Number.isFinite(visiblePlotted[0])) {
-            minPan = Math.min(-0.25, chart.pricePan, (height - padding * 2 - baseY(visiblePlotted[0])) / priceHeight);
-            maxPan = Math.max(0.25, chart.pricePan, (margin.top + padding - baseY(visiblePlotted[1])) / priceHeight);
-        }
-        // MACD and ROC both draw a zero line, so zero stays inside their range.
-        if (macd || macdh) fitDomain(yMacd, extentOf([macd ? MacdLine[0] : null, macd ? MacdSignal[0] : null, macdh ? MacdHist[0] : null], low, high, 0), 0.05);
-        if (roc) fitDomain(yRoc, extentOf([Roc], low, high, 0), 0.05);
-    };
-    const gesturePoint = event => {
-        if (!event) return null;
-        const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
-        return points.length ? [d3.mean(points, point => point[0]), d3.mean(points, point => point[1])] : null;
-    };
-    let panGesture = null;
-    const updateZoom = event => {
-        const transform = constrain(event.transform);
-        chart.zoomTransform = d3.zoomIdentity.translate(transform.x, 0).scale(transform.k);
-        x.range(baseRange.map(pixel => transform.applyX(pixel)));
-        autoscale();
-        const source = event.sourceEvent;
-        if (panGesture && (source?.type === 'mousemove' || source?.type === 'touchmove')) {
-            const count = source.touches?.length || 1, point = gesturePoint(source);
-            if (point) {
-                if (count !== panGesture.count) {
-                    panGesture.py = point[1]; panGesture.offset = chart.pricePan; panGesture.count = count;
-                }
-                if (!source.touches || count >= 2) {
-                    const delta = point[1] - panGesture.py;
-                    if (Math.abs(delta) >= 3 || panGesture.active) {
-                        panGesture.active = true;
-                        chart.pricePan = Math.max(minPan, Math.min(maxPan, panGesture.offset + delta / priceHeight));
-                    }
-                }
-            }
-        }
-        applyPricePan();
-        panelUpdates.forEach(update => update());
-        ctx.hrLines.forEach(place => place());
-        svg.select('.date-axis').call(xAxis).select('.domain')
-            .attr('d', `M${plotLeft},0.5H${plotRight}`);
-        afterAxes.forEach(update => update());
-        hidePointer();
-    };
-    this.zoomBehavior = d3.zoom().extent(extent).scaleExtent([1, maxZoom])
-        .constrain(constrain)
-        .filter(event => !chart.drawingTrend && !chart.trendEdit && !event.altKey &&
-            (!event.button || event.type === 'wheel') &&
-            (event.type !== 'wheel' || event.ctrlKey || event.metaKey) &&
-            !event.target.closest?.('.trend, .trend-hit, .trend-handle, .info-marker') &&
-            (event.type !== 'touchstart' || event.touches.length >= 2) && (() => {
-                const points = event.touches ? d3.pointers(event.touches, svg.node()) : [d3.pointer(event, svg.node())];
-                return points.every(([px, py]) => px >= plotLeft && px <= plotRight &&
-                    chart.panelGeometry.some(panel => py >= panel.top && py <= panel.bottom));
-            })())
-        .on('start', event => {
-            chart.zooming = true; hidePointer();
-            if (event.sourceEvent?.type === 'mousedown') svg.classed('panning', true);
-            const point = gesturePoint(event.sourceEvent);
-            panGesture = point && ['mousedown', 'touchstart'].includes(event.sourceEvent?.type) &&
-                point[1] >= margin.top && point[1] <= height - padding
-                ? { py: point[1], offset: chart.pricePan, count: event.sourceEvent.touches?.length || 1, active: false } : null;
-        })
-        .on('zoom', updateZoom)
-        .on('end', () => { chart.zooming = false; panGesture = null; svg.classed('panning', false); });
-    svg.style('touch-action', 'pan-y').call(this.zoomBehavior)
-        .on('dblclick.zoom', null)
-        .on('dblclick.reset', event => {
-            if (chart.drawingTrend || chart.trendEdit) return;
-            event.preventDefault();
-            chart.pricePan = 0;
-            svg.call(chart.zoomBehavior.transform, d3.zoomIdentity);
-        });
-    // Cooperative gestures: a plain wheel scrolls the page; two fingers belong to
-    // the chart, and a long-press crosshair must not scroll the page.
-    svg.on('touchstart.guard', event => { if (event.touches.length >= 2 && event.cancelable) event.preventDefault(); }, { passive: false })
-        .on('touchmove.guard', event => { if (chart.touchInspect && event.cancelable) event.preventDefault(); }, { passive: false });
-    svg.call(this.zoomBehavior.transform, constrain(this.zoomTransform));
-}
-
-// round functions
-roundn(number) {
-    return Math.round((number + Number.EPSILON) * 100) / 100;
-}
-
-roundx(number) {
+  roundx(number) {
     return Math.round((number + Number.EPSILON) * 10) / 10;
+  }
 }
-
-}
+// Saved settings (localStorage) and the controls they cover.
 HistoricalPriceChart.storageKey = 'fxchart.v1';
 HistoricalPriceChart.textControls = ['ma_a','ma_b','ma_c','ma_d','bb_N','bb_K','macd_fast','macd_slow','macd_signal','roc_values','rsi_values','stoch_values'];
 HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals','crosshair'];
-window.HistoricalPriceChart=HistoricalPriceChart;
-const startChart=()=>{
-window.historicalPriceChart?.destroy();
-window.historicalPriceChart=new HistoricalPriceChart();
+
+// ===== Start-up ================================================================
+window.HistoricalPriceChart = HistoricalPriceChart;
+const startChart = () => {
+  window.historicalPriceChart?.destroy();
+  window.historicalPriceChart = new HistoricalPriceChart();
 };
-window.cqu=()=>window.historicalPriceChart?.convertOrQuote();
-window.updatechart=()=>window.historicalPriceChart?.reloadData();
-if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',startChart,{once:true}); else startChart();
+// Used by index.html: the converter field calls cqu() on Enter.
+window.cqu = () => window.historicalPriceChart?.convertOrQuote();
+window.updatechart = () => window.historicalPriceChart?.reloadData();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startChart, { once: true });
+else startChart();
