@@ -542,6 +542,18 @@ svg.panning * {
 	fill: var(--level-color);
 }
 
+/* No focus box around lines, levels, handles and markers in the chart: a selected
+   line or level is shown by its own style. Keyboard use still works. */
+article svg [tabindex]:focus,
+article svg [tabindex]:focus-visible {
+	outline: none;
+}
+
+/* the hand stays while a level is dragged */
+.level-hit:active {
+	cursor: pointer;
+}
+
 /* selected level: thicker and solid; drag it up or down, Delete removes it */
 .level.selected .level-line {
 	stroke-width: 2;

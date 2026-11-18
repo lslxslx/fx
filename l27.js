@@ -1878,7 +1878,7 @@ class HistoricalPriceChart {
           group.append('line').attr('class', 'level-hit').attr('stroke', 'transparent')
             .attr('stroke-width', 14).attr('pointer-events', 'stroke')
             .attr('tabindex', 0).attr('role', 'button')
-            .style('cursor', 'ns-resize').style('touch-action', 'none');
+            .style('cursor', 'pointer').style('touch-action', 'none');
           group.append('text').attr('class', 'level-label').attr('text-anchor', 'end').attr('dy', -4);
           return group;
         }).classed('selected', level => level.id === chart.selectedLevelId)
