@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 
 <head>
     <title>Technical analysis chart</title>
@@ -10,175 +10,180 @@
     <meta name="keywords" content="forex, albania, eur, usd, gbp, chf, xau, xag, chart, technical, analysis, financial, market">
     <meta name="robots" content="index,nofollow">
     <meta name="format-detection" content="telephone=no">
-    
+
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Technical analysis chart">
-    
+
     <meta name="msapplication-TileColor" content="#efefef">
     <meta property="og:title" content="Technical analysis chart">
     <meta property="og:locale" content="en_US">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Technical analysis chart">
-    
+
     <link rel="stylesheet" type="text/css" href="./css.css">
     <script src="https://d3js.org/d3.v7.min.js" type="text/javascript"></script>
 </head>
 
 <body>
-    <main role="main">       
+    <main role="main">
         <noscript>&bowtie; JavaScript is disabled!</noscript>
         <section>
         <menu>
-            <a href="./" title="Technical analysis chart">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26px" height="26px"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
-            </a>
             <input type="checkbox" id="menu">
-            <label for="menu" data-abbr="Menu" data-long="Converter"></label>
-            <input type="button" id="update" title="Reload chart">
+            <div class="menu-bar">
+                <a href="./" class="logo" title="Technical analysis chart">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+                </a>
+                <label for="menu" class="menu-toggle">Menu</label>
+                <input type="button" id="update" title="Reload chart" value="&#8635;">
+            </div>
+
             <div id="cpanel">
-                <div id="converter">
-                    <details>
-                        <summary data-abbr="Converter ?"></summary>
-                        <p>To convert (source: Bank of Albania): <code>{amount}</code> <code>{sell symbol}</code>
-                    <code>{buy symbol}</code>
-                    <br>
-                    e.g. to convert 100.5 Euro in Albanian Lek (exchange rate from Bank of Albania):
-                    <code>100.5 EUR ALL</code><br>
-                    
-                    </p>
+                <details class="section" id="sec-currency" open>
+                    <summary>Currency <small id="updated"></small></summary>
+                    <div id="currency">
+                        <input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR"><b>EUR</b><span data-rate="EUR">…</span><span data-percent="EUR"></span></label>
+                        <input type="radio" name="currency" id="USD" value="USD"><label for="USD"><b>USD</b><span data-rate="USD">…</span><span data-percent="USD"></span></label>
+                        <input type="radio" name="currency" id="GBP" value="GBP"><label for="GBP"><b>GBP</b><span data-rate="GBP">…</span><span data-percent="GBP"></span></label>
+                        <input type="radio" name="currency" id="CHF" value="CHF"><label for="CHF"><b>CHF</b><span data-rate="CHF">…</span><span data-percent="CHF"></span></label>
+                        <input type="radio" name="currency" id="JPY" value="JPY"><label for="JPY" title="Rate for 100 JPY"><b>JPY <small>×100</small></b><span data-rate="JPY">…</span><span data-percent="JPY"></span></label>
+                        <input type="radio" name="currency" id="AUD" value="AUD"><label for="AUD"><b>AUD</b><span data-rate="AUD">…</span><span data-percent="AUD"></span></label>
+                        <input type="radio" name="currency" id="CAD" value="CAD"><label for="CAD"><b>CAD</b><span data-rate="CAD">…</span><span data-percent="CAD"></span></label>
+                        <input type="radio" name="currency" id="XAU" value="XAU"><label for="XAU" title="Gold, rate for one troy ounce"><b>XAU</b><span data-rate="XAU">…</span><span data-percent="XAU"></span></label>
+                        <input type="radio" name="currency" id="XAG" value="XAG"><label for="XAG" title="Silver, rate for one troy ounce"><b>XAG</b><span data-rate="XAG">…</span><span data-percent="XAG"></span></label>
+                    </div>
+                </details>
+
+                <details class="section" id="sec-period" open>
+                    <summary>Period</summary>
+                    <div id="interval">
+                        <div class="segmented">
+                            <input type="radio" name="interval" id="daily" value="daily" checked><label for="daily" title="Daily">D</label>
+                            <input type="radio" name="interval" id="weekly" value="wave"><label for="weekly" title="Weekly (average of the week)">W</label>
+                            <input type="radio" name="interval" id="monthly" value="mave"><label for="monthly" title="Monthly (average of the month)">M</label>
+                            <input type="radio" name="interval" id="quarterly" value="quave"><label for="quarterly" title="Quarterly (average of the quarter)">Q</label>
+                        </div>
+                        <select id="ix" title="Range">
+                            <option value="1">1M</option>
+                            <option value="3">3M</option>
+                            <option value="6">6M</option>
+                            <option value="12" selected>1Y</option>
+                            <option value="24">2Y</option>
+                            <option value="36">3Y</option>
+                            <option value="60">5Y</option>
+                            <option value="120">10Y</option>
+                            <option value="240">20Y</option>
+                            <option value="0">Max</option>
+                        </select>
+                        <div class="date-range" title="Custom date range">
+                            <input type="date" min="1991-01-01" id="start" aria-label="From">
+                            <span aria-hidden="true">–</span>
+                            <input type="date" min="1991-01-01" id="end" aria-label="To">
+                        </div>
+                    </div>
+                </details>
+
+                <details class="section" id="overlays" open>
+                    <summary>Overlays</summary>
+                    <div id="ma-list" aria-label="Moving averages"></div>
+                    <button type="button" id="ma-add" class="add">+ Moving average</button>
+                    <div class="row">
+                        <input type="checkbox" id="bband"><label for="bband" class="chip">Bollinger</label>
+                        <span class="params">
+                            <input type="text" inputmode="numeric" id="bb_N" placeholder="20" title="N period of moving average" aria-label="Bollinger period">
+                            <input type="text" inputmode="decimal" id="bb_K" placeholder="2" title="K * n-period standard deviation above/below moving average" aria-label="Bollinger deviations">
+                        </span>
+                    </div>
+                    <div class="row">
+                        <input type="checkbox" id="fib"><label for="fib" class="chip" title="Fibonacci retracement of the visible range">Fibonacci</label>
+                    </div>
+                </details>
+
+                <details class="section" id="indicators" open>
+                    <summary>Indicators</summary>
+                    <div class="row">
+                        <input type="checkbox" id="macd"><label for="macd" class="chip">MACD</label>
+                        <input type="checkbox" id="macdh"><label for="macdh" class="chip" title="MACD histogram">Hist</label>
+                        <span class="params">
+                            <input type="text" inputmode="numeric" id="macd_fast" placeholder="8" title="Fast period" aria-label="MACD fast period">
+                            <input type="text" inputmode="numeric" id="macd_slow" placeholder="17" title="Slow period" aria-label="MACD slow period">
+                            <input type="text" inputmode="numeric" id="macd_signal" placeholder="9" title="Signal period" aria-label="MACD signal period">
+                        </span>
+                    </div>
+                    <div class="row">
+                        <input type="checkbox" id="roc"><label for="roc" class="chip">ROC</label>
+                        <span class="params"><input type="text" inputmode="numeric" id="roc_values" placeholder="12" title="N period of price change" aria-label="ROC period"></span>
+                    </div>
+                    <div class="row">
+                        <input type="checkbox" id="rsi"><label for="rsi" class="chip">RSI</label>
+                        <span class="params"><input type="text" inputmode="numeric" id="rsi_values" placeholder="14" title="N period of moving average" aria-label="RSI period"></span>
+                    </div>
+                    <div class="row">
+                        <input type="checkbox" id="stoch"><label for="stoch" class="chip" title="Stochastic oscillator">Stoch</label>
+                        <span class="params"><input type="text" inputmode="numeric" id="stoch_values" placeholder="14" title="N period of closing range" aria-label="Stochastic period"></span>
+                    </div>
+                </details>
+
+                <details class="section" id="tools" open>
+                    <summary>Tools</summary>
+                    <div class="row">
+                        <input type="checkbox" id="signals"><label for="signals" class="chip" title="Mark moving average and MACD crossovers">Signals</label>
+                        <input type="checkbox" id="crosshair"><label for="crosshair" class="chip" title="Crosshair: date and value on the axes">Crosshair</label>
+                    </div>
+                    <details class="help">
+                        <summary>Help</summary>
+                        <p>
+                            Moving averages: choose SMA (simple), EMA (exponential) or DEMA (double exponential) and the number of days (weeks / months). Up to 10.
+                            <br>
+                            Bollinger Band &reg; calculation by default is based on 20-day (week / month) simple moving average.
+                            <br>
+                            Moving Average Convergence/Divergence (MACD) calculation by default is based on 8-, 17- and 9-day (week / month) exponential moving average.
+                            <br>
+                            Rate of Change (ROC) calculation by default is based on 12-day (week / month) price change.
+                            <br>
+                            Relative Strength Index (RSI) calculation by default is based on 14-day average.
+                            <br>
+                            Stochastic (Stoch) calculation by default is based on the 14-day (week / month) range of closing prices; %D is the 3-period average of %K.
+                            <br>
+                            Fibonacci: retracement (0, 23.6, 38.2, 50, 61.8, 78.6 and 100%) between the highest and the lowest close of the visible part of the chart; 0% is on whichever came last.
+                            <br>
+                            Signals: &#9650; / &#9660; mark where the faster of the first two moving averages crosses above / below the slower one (with a single moving average: price against it), and where the MACD line crosses its signal line.
+                            <br>
+                            <br>
+                            Zoom with Ctrl / Cmd + wheel (two fingers on touch screens), drag to move, double-click to reset. Drag the space between two panels to change their height.
+                            <br>
+                            Use the secondary click to draw a (trend) line. Click a line to select it (drag its ends to move them); press Delete or Backspace to delete the selected line.
+                            <br>
+                            Hold down the alt key (option on mac) and use the secondary click to draw a Fibonacci retracement between two points (0% at the second point); select, move and delete it like a trend line.
+                            <br>
+                            Hold down the shift key and click to add a horizontal (support / resistance) level. Click a level to select it, drag it up or down to move it, and press Delete or Backspace to delete it.
+                            <br>
+                            Settings, lines and levels are remembered in this browser.
+                        </p>
                     </details>
-                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL &crarr;"
+                </details>
+
+                <details class="section" id="converter">
+                    <summary>Converter</summary>
+                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL &crarr;" aria-label="Amount, sell currency, buy currency"
                         onkeydown="if (event.key == 'Enter') { cqu();}" />
                     <span id="cqr"></span>
-                </div>
-<div id="currency" data-long="Currencies" data-abbr="Historical data"><input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR">EUR<i data-rate="EUR">…</i><i data-percent="EUR"></i><i data-change="EUR"></i></label>
-<input type="radio" name="currency" id="USD" value="USD" ><label for="USD">USD<i data-rate="USD">…</i><i data-percent="USD"></i><i data-change="USD"></i></label>
-<input type="radio" name="currency" id="GBP" value="GBP" ><label for="GBP">GBP<i data-rate="GBP">…</i><i data-percent="GBP"></i><i data-change="GBP"></i></label>
-<input type="radio" name="currency" id="CHF" value="CHF" ><label for="CHF">CHF<i data-rate="CHF">…</i><i data-percent="CHF"></i><i data-change="CHF"></i></label>
-<input type="radio" name="currency" id="XAU" value="XAU" ><label for="XAU">XAU<i data-rate="XAU">…</i><i data-percent="XAU"></i><i data-change="XAU"></i></label>
-<input type="radio" name="currency" id="XAG" value="XAG" ><label for="XAG">XAG<i data-rate="XAG">…</i><i data-percent="XAG"></i><i data-change="XAG"></i></label>
-<input type="radio" name="currency" id="JPY" value="JPY" ><label for="JPY">JPY<i data-rate="JPY">…</i><i data-percent="JPY"></i><i data-change="JPY"></i></label>
-<input type="radio" name="currency" id="AUD" value="AUD" ><label for="AUD">AUD<i data-rate="AUD">…</i><i data-percent="AUD"></i><i data-change="AUD"></i></label>
-<input type="radio" name="currency" id="CAD" value="CAD" ><label for="CAD">CAD<i data-rate="CAD">…</i><i data-percent="CAD"></i><i data-change="CAD"></i></label></div>
-                <div id="interval" data-long="Interval">
-                    <input type="radio" name="interval" id="daily" value="daily" checked>
-                    <label for="daily" data-abbr="D" data-long="Daily"></label>
-                    <input type="radio" name="interval" id="weekly" value="wave">
-                    <label for="weekly" data-abbr="W" data-long="Weekly"></label>
-                    <input type="radio" name="interval" id="monthly" value="mave">
-                    <label for="monthly" data-abbr="M" data-long="Monthly"></label>
-                    <input type="radio" name="interval" id="quarterly" value="quave">
-                    <label for="quarterly" data-abbr="Q" data-long="Quarterly"></label>
-                    <!-- -->
-                    <select id="ix">
-                        <option value="1">1M</option>
-                        <option value="3">3M</option>
-                        <option value="6">6M</option>
-                        <option value="12" selected>1Y</option>
-                        <option value="24">2Y</option>
-                        <option value="36">3Y</option>
-                        <option value="60">5Y</option>
-                        <option value="120">10Y</option>
-                        <option value="240">20Y</option>
-                        <option value="0">Max</option>
-                    </select>
-                    <!-- -->
-                    <span id="csdrange" data-long="Custom date range">
-                        <input type="date" min="1991-01-01"  id="start"
-                            pattern="\d{2}.\d{2}.\d{4}">
-                        <input type="date" min="1991-01-01"  id="end"
-                            pattern="\d{2}.\d{2}.\d{4}">
-                    </span>
-                </div>
-                <div id="overlays" data-long="Overlays">
-                    <details>
-                        <summary data-abbr="Overlays & Indicators ?"></summary>
-                        <p>Bollinger Band &reg; calculation by default is based on 20-day (week / month) simple moving average. 
-                    <br>
-                    Moving Average (Simple) (SMA): <code>S{number}</code>, e.g. S20 for 20-day (week / month) simple moving
-                    average.<br>
-                    Moving Average (Exponential) (EMA): <code>E{number}</code>, e.g. E20 for 20-day (week / month)
-                    exponential moving average.<br>
-                    Moving Average (Double Exponential) (DEMA): <code>D{number}</code>, e.g. D100 for 100-day (week /
-                    month) double exponential moving average.
-                    <br>
-                    <br>
-                    Moving Average Convergence/Divergence (MACD) calculation by default is based on 8-, 17- and 9-day
-                    (week / month) exponential moving average.
-                    <br>
-                    Rate of Change (ROC) calculation by default is based on 12-day (week / month) price change.
-                    <br>
-                    Relative Strength Index (RSI) calculation by default is based on 14-day average.
-                    <br>
-                    Stochastic (Stoch) calculation by default is based on the 14-day (week / month) range of closing prices; %D is the 3-period average of %K.
-                    <br>
-                    Signals: &#9650; / &#9660; mark where the faster of the first two moving averages crosses above / below the slower one (with a single moving average: price against it), and where the MACD line crosses its signal line.
-                    <br>
-                    <br>
-                    Use the secondary click to draw a (trend) line. Click a line to select it (drag its ends to move them); press Delete or Backspace to delete the selected line.
-                    <br>
-                    Fib: Fibonacci retracement (0, 23.6, 38.2, 50, 61.8, 78.6 and 100%) between the highest and the lowest close of the visible part of the chart; 0% is on whichever came last.
-                    <br>
-                    Hold down the alt key (option on mac) and use the secondary click to draw a Fibonacci retracement between two points (0% at the second point); select, move and delete it like a trend line.
-                    <br>
-Hold down the shift key and click to add a horizontal (support / resistance) level. Click a level to select it, drag it up or down to move it, and press Delete or Backspace to delete it.
-                    <br>
-                    Crosshair: shows the date and the value on the axes. With touch, one finger moves it (the page does not scroll over the chart while it is on); two fingers move and zoom the chart. Zoom with Ctrl / Cmd + wheel.
-                    <br>
-                    Settings, lines and levels are remembered in this browser.</p>
-                    </details>
-                    <input type="checkbox" id="bband">
-                    <label for="bband" data-abbr="BB" data-long="Bollinger Bands"></label>
-                    <span>
-                        <input type="text" id="bb_N" placeholder="20" title="N period of moving average">
-                        <input type="text" id="bb_K" placeholder="2"
-                            title="K * n-period standard deviation above/below moving average">
-                    </span>
-                    <input type="text" maxlength="4" id="ma_a" placeholder="MA" title="Moving average">
-                    <input type="text" maxlength="4" id="ma_b" placeholder="MA" title="Moving average">
-                    <input type="text" maxlength="4" id="ma_c" placeholder="MA" title="Moving average">
-                    <input type="text" maxlength="4" id="ma_d" placeholder="MA" title="Moving average">
-                    <input type="checkbox" id="fib">
-                    <label for="fib" title="Fibonacci retracement of the visible range">Fib</label>
-                </div>
-                <div id="indicators" data-long="Indicators">
-                    <input type="checkbox" id="macd">
-                    <label for="macd">MACD</label>
-                    <input type="checkbox" id="macdh">
-                    <label for="macdh" title="Histogram">Hist</label>
-                    <span>
-                        <input type="text" id="macd_fast" placeholder="8" title="Fast period">
-                        <input type="text" id="macd_slow" placeholder="17" title="Slow period">
-                        <input type="text" id="macd_signal" placeholder="9" title="Signal period">
-                    </span>
-                    <input type="checkbox" id="roc">
-                    <label for="roc">ROC</label>
-                    <input type="text" id="roc_values" placeholder="12" title="N period of price change">
-                    <input type="checkbox" id="rsi">
-                    <label for="rsi">RSI</label>
-                    <input type="text" id="rsi_values" placeholder="14" title="N period of moving average">
-                    <input type="checkbox" id="stoch">
-                    <label for="stoch" title="Stochastic oscillator">Stoch</label>
-                    <input type="text" id="stoch_values" placeholder="14" title="N period of closing range">
-                    <input type="checkbox" id="signals">
-                    <label for="signals" title="Mark moving average and MACD crossovers">Signals</label>
-                    <input type="checkbox" id="crosshair">
-                    <label for="crosshair" title="Crosshair: date and value on the axes">Crosshair</label>
-                </div>
+                    <p class="hint">Source: Bank of Albania. Format: <code>{amount} {sell} {buy}</code>, e.g. <code>100.5 EUR ALL</code>.</p>
+                </details>
             </div>
         </menu>
         <article>
+            <p id="data-status" role="status" aria-live="polite"></p>
             <svg></svg>
         </article>
         </section>
         <footer>
             <p>
                 This site does not use cookies. <a href="./data/latest.json" title="Json data">Data</a>
-                <noscript>&bowtie; JavaScript is disabled!</noscript>
             </p>
             <p>
-                ルイス &copy; 2022 - 2025
+                ルイス &copy; 2022 - 2026
             </p>
         </footer>
     </main>
