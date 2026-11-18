@@ -91,6 +91,138 @@ window.ForexData = (() => {
 })();
 
 
+
+// Technical analysis formulas (StockCharts ChartSchool definitions).
+// Pure functions: no DOM, no chart state. All of them expect chronological data
+// (oldest first) and return a shorter array whose LAST element belongs to the last
+// data point; HistoricalPriceChart.indicatorSeries() flips the results for drawing.
+// EMA SMA DEMA MACD ROC RSI Stochastic Bollinger Bands
+const Indicators = {
+  average(data) {
+    let num = 0;
+    for (let i = 0; i < data.length; i++) num += Number(data[i]);
+    return num / data.length;
+  },
+  EMA(data, range) {
+    if (data.length < range) {
+        console.log("EMA: Range greater than array length.");
+        return [];
+    }
+    // Seed with the simple average of the first period, then smooth forward.
+    let k = 2 / (range + 1),
+        num = Indicators.average(data.slice(0, range)),
+        e = [num];
+    for (let i = range; i < data.length; i++) {
+        num = (k * Number(data[i])) + ((1 - k) * num);
+        e.push(num);
+    }
+    return e;
+  },
+  SMA(data, range) {
+    if (data.length < range) {
+        console.log("SMA: Range greater than array length.");
+        return [];
+    }
+    const s = [];
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+        sum += data[i];
+        if (i >= range) sum -= data[i - range];
+        if (i >= range - 1) s.push(sum / range);
+    }
+    return s;
+  },
+  DEMA(data, range) {
+    let firstEma = Indicators.EMA(data, range),
+        secondEma = Indicators.EMA(firstEma, range);
+    if (!secondEma.length) {
+        console.log("DEMA: Range greater than array length.");
+        return [];
+    }
+    // The second EMA starts later: align both series at their latest value.
+    const lag = firstEma.length - secondEma.length;
+    return secondEma.map((x, i) => (2 * firstEma[i + lag]) - x);
+  },
+  MACD(data, eshort, elong, esignal) {
+    let emashort = Indicators.EMA(data, eshort),
+        emalong = Indicators.EMA(data, elong),
+        // The two averages have different warm-up lengths; align them at the end.
+        n = Math.min(emashort.length, emalong.length),
+        macdline = Array.from({ length: n }, (_x, i) =>
+            emashort[emashort.length - n + i] - emalong[emalong.length - n + i]),
+        macdsignal = Indicators.EMA(macdline, esignal),
+        lag = macdline.length - macdsignal.length,
+        macdhist = macdsignal.map((x, i) => macdline[i + lag] - x);
+    return [{ macdline: macdline, macdsignal: macdsignal, macdhist: macdhist }];
+  },
+  ROC(data, N) {
+    let roc = [];
+    if (data.length <= N) {
+        console.log("ROC: Range greater than array length.");
+        return [];
+    }
+    for (let i = N; i < data.length; i++) {
+        roc.push({ roc: ((data[i] - data[i - N]) / data[i - N]) * 100 });
+    }
+    return roc;
+  },
+  RSI(data, N) {
+    let avg = 0,
+        avl = 0,
+        rsi = [];
+    if (data.length <= N) {
+        console.log("RSI: Range greater than array length.");
+        return [];
+    }
+    const value = () => avl === 0 ? (avg === 0 ? 50 : 100) : 100 - (100 / (1 + avg / avl));
+    // first "N" changes: simple average of gains and losses
+    for (let i = 1; i <= N; i++) {
+        const change = data[i] - data[i - 1];
+        if (change > 0) avg += change; else avl -= change;
+    }
+    avg /= N;
+    avl /= N;
+    rsi.push({ rsi: value() });
+    // the rest: Wilder smoothing (an unchanged price still decays both averages)
+    for (let i = N + 1; i < data.length; i++) {
+        const change = data[i] - data[i - 1];
+        avg = (avg * (N - 1) + Math.max(change, 0)) / N;
+        avl = (avl * (N - 1) + Math.max(-change, 0)) / N;
+        rsi.push({ rsi: value() });
+    }
+    return rsi;
+  },
+  // Stochastic oscillator on closing prices: %K = position of the close inside
+  // the N-period closing range, %D = 3-period simple average of %K.
+  STOCH(data, N, smooth = 3) {
+    const k = [];
+    for (let i = N - 1; i < data.length; i++) {
+        let low = Infinity, high = -Infinity;
+        for (let j = i - N + 1; j <= i; j++) {
+            if (data[j] < low) low = data[j];
+            if (data[j] > high) high = data[j];
+        }
+        k.push(high > low ? (data[i] - low) / (high - low) * 100 : 50);
+    }
+    return { k, d: k.length >= smooth ? Indicators.SMA(k, smooth) : [] };
+  },
+  bollingerband(data, N, K) {
+    const bands = [];
+    if (N <= 1) {
+        console.log("BB: N period of moving average should be grater than 1.");
+        return [];
+    }
+    for (let i = N - 1, n = data.length; i < n; i++) {
+        let slc = data.slice(i + 1 - N, i + 1),
+            m = slc.reduce((a, b) => a + b) / slc.length,
+            s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length);
+        bands.push({ low: m - (s * K), high: m + (s * K) });
+    }
+    return bands;
+  }
+};
+window.FxIndicators = Indicators;
+
 // (C) luislamani — class refactor, phase 1
 class HistoricalPriceChart {
   constructor(container = document.querySelector('article')) {
@@ -315,16 +447,16 @@ class HistoricalPriceChart {
     const ma = suffix => !isNaN(c['ma_' + suffix])
       ? memo(['ma', c['mma_' + suffix], c['ma_' + suffix]], () => newestFirst(this.SwMA(c['mma_' + suffix], chrono, c['ma_' + suffix]))) : false;
     const bands = enabled.bband ? memo(['bb', c.N, c.K], () => {
-      const result = newestFirst(this.bollingerband(chrono, c.N, c.K));
+      const result = newestFirst(Indicators.bollingerband(chrono, c.N, c.K));
       return { data: result, lower: result.map(d => d.low), upper: result.map(d => d.high) };
     }) : null;
     // MACD line, signal and histogram share one calculation and parameter key.
     const macd = enabled.macd || enabled.macdh ? memo(['macd', c.eshort, c.elong, c.esignal], () => {
-      const result = this.MACD(chrono)[0];
+      const result = Indicators.MACD(chrono, c.eshort, c.elong, c.esignal)[0];
       return { line: [newestFirst(result.macdline)], signal: [newestFirst(result.macdsignal)], histogram: [newestFirst(result.macdhist)] };
     }) : null;
     const stoch = enabled.stoch ? memo(['stoch', c.ST], () => {
-      const result = this.STOCH(chrono, c.ST);
+      const result = Indicators.STOCH(chrono, c.ST);
       return { k: newestFirst(result.k), d: newestFirst(result.d) };
     }) : null;
     return {
@@ -335,8 +467,8 @@ class HistoricalPriceChart {
       MacdHist: enabled.macdh ? macd.histogram : false,
       // Crossover markers need both MACD series even when only the histogram is drawn.
       MacdCross: macd ? { line: macd.line[0], signal: macd.signal[0] } : null,
-      Roc: enabled.roc ? memo(['roc', c.RC], () => newestFirst(this.ROC(chrono, c.RC).map(d => d.roc))) : false,
-      Rsi: enabled.rsi ? memo(['rsi', c.RS], () => newestFirst(this.RSI(chrono, c.RS).map(d => d.rsi))) : false,
+      Roc: enabled.roc ? memo(['roc', c.RC], () => newestFirst(Indicators.ROC(chrono, c.RC).map(d => d.roc))) : false,
+      Rsi: enabled.rsi ? memo(['rsi', c.RS], () => newestFirst(Indicators.RSI(chrono, c.RS).map(d => d.rsi))) : false,
       StochK: stoch ? stoch.k : false, StochD: stoch ? stoch.d : false
     };
   }
@@ -935,13 +1067,13 @@ switchintervalix(v, vix) {
 SwMA(v, ldata, rdata) {
     switch (v.toUpperCase()) {
         case 'S':
-            return this.SMA(ldata, rdata);
+            return Indicators.SMA(ldata, rdata);
             break;
         case 'E':
-            return this.EMA(ldata, rdata);
+            return Indicators.EMA(ldata, rdata);
             break;
         case 'D':
-            return this.DEMA(ldata, rdata);
+            return Indicators.DEMA(ldata, rdata);
             break;
         default:
             return null;
@@ -966,18 +1098,6 @@ SwMALegend(v) {
 
 
 parseData(values, currency) {
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
     let arr = [];
     for (let i in values) {
         arr.push({
@@ -989,21 +1109,11 @@ const bollingerband = this.bollingerband.bind(this);
 }
 
 drawChart(values, currency) {
-const parseData = this.parseData.bind(this);
-const roundn = this.roundn.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
 let {ma_a,ma_b,ma_c,ma_d,mma_a,mma_b,mma_c,mma_d,N,K,eshort,elong,esignal,RC,RS,ST,bband,macd,macdh,roc,rsi,stoch,signals}=this.config;
 const svgvB=this.container, interval=this.state.interval, chart=this;
 this.drawingTrend = Boolean(this.trendDraft);
 const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
+const roundn = this.roundn.bind(this), roundx = this.roundx.bind(this);
     const series = this.indicatorSeries(values);
     const limdata = 50,
         macdhbinsl = 1500,
@@ -1906,164 +2016,11 @@ const SwMA=this.SwMA.bind(this), SwMALegend=this.SwMALegend.bind(this);
 
 // round functions
 roundn(number) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundx = this.roundx.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
     return Math.round((number + Number.EPSILON) * 100) / 100;
 }
 
 roundx(number) {
-const parseData = this.parseData.bind(this);
-const drawChart = this.drawChart.bind(this);
-const roundn = this.roundn.bind(this);
-const EMA = this.EMA.bind(this);
-const average = this.average.bind(this);
-const SMA = this.SMA.bind(this);
-const DEMA = this.DEMA.bind(this);
-const MACD = this.MACD.bind(this);
-const ROC = this.ROC.bind(this);
-const RSI = this.RSI.bind(this);
-const bollingerband = this.bollingerband.bind(this);
-
     return Math.round((number + Number.EPSILON) * 10) / 10;
-}
-
-// technical analysis functions
-// EMA SMA DEMA MACD ROC RSI Stochastic Bollinger Bands
-// All of them expect chronological data (oldest first) and return a shorter
-// array whose LAST element belongs to the last data point; indicatorSeries()
-// flips the result for drawing.
-average(data) {
-    let num = 0;
-    for (let i = 0; i < data.length; i++) num += Number(data[i]);
-    return num / data.length;
-}
-EMA(data, range) {
-    if (data.length < range) {
-        console.log("EMA: Range greater than array length.");
-        return [];
-    }
-    // Seed with the simple average of the first period, then smooth forward.
-    let k = 2 / (range + 1),
-        num = this.average(data.slice(0, range)),
-        e = [num];
-    for (let i = range; i < data.length; i++) {
-        num = (k * Number(data[i])) + ((1 - k) * num);
-        e.push(num);
-    }
-    return e;
-}
-SMA(data, range) {
-    if (data.length < range) {
-        console.log("SMA: Range greater than array length.");
-        return [];
-    }
-    const s = [];
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-        sum += data[i];
-        if (i >= range) sum -= data[i - range];
-        if (i >= range - 1) s.push(sum / range);
-    }
-    return s;
-}
-DEMA(data, range) {
-    let firstEma = this.EMA(data, range),
-        secondEma = this.EMA(firstEma, range);
-    if (!secondEma.length) {
-        console.log("DEMA: Range greater than array length.");
-        return [];
-    }
-    // The second EMA starts later: align both series at their latest value.
-    const lag = firstEma.length - secondEma.length;
-    return secondEma.map((x, i) => (2 * firstEma[i + lag]) - x);
-}
-MACD(data) {
-    const { eshort, elong, esignal } = this.config;
-    let emashort = this.EMA(data, eshort),
-        emalong = this.EMA(data, elong),
-        // The two averages have different warm-up lengths; align them at the end.
-        n = Math.min(emashort.length, emalong.length),
-        macdline = Array.from({ length: n }, (_x, i) =>
-            emashort[emashort.length - n + i] - emalong[emalong.length - n + i]),
-        macdsignal = this.EMA(macdline, esignal),
-        lag = macdline.length - macdsignal.length,
-        macdhist = macdsignal.map((x, i) => macdline[i + lag] - x);
-    return [{ macdline: macdline, macdsignal: macdsignal, macdhist: macdhist }];
-}
-ROC(data, N) {
-    let roc = [];
-    if (data.length <= N) {
-        console.log("ROC: Range greater than array length.");
-        return [];
-    }
-    for (let i = N; i < data.length; i++) {
-        roc.push({ roc: ((data[i] - data[i - N]) / data[i - N]) * 100 });
-    }
-    return roc;
-}
-RSI(data, N) {
-    let avg = 0,
-        avl = 0,
-        rsi = [];
-    if (data.length <= N) {
-        console.log("RSI: Range greater than array length.");
-        return [];
-    }
-    const value = () => avl === 0 ? (avg === 0 ? 50 : 100) : 100 - (100 / (1 + avg / avl));
-    // first "N" changes: simple average of gains and losses
-    for (let i = 1; i <= N; i++) {
-        const change = data[i] - data[i - 1];
-        if (change > 0) avg += change; else avl -= change;
-    }
-    avg /= N;
-    avl /= N;
-    rsi.push({ rsi: value() });
-    // the rest: Wilder smoothing (an unchanged price still decays both averages)
-    for (let i = N + 1; i < data.length; i++) {
-        const change = data[i] - data[i - 1];
-        avg = (avg * (N - 1) + Math.max(change, 0)) / N;
-        avl = (avl * (N - 1) + Math.max(-change, 0)) / N;
-        rsi.push({ rsi: value() });
-    }
-    return rsi;
-}
-// Stochastic oscillator on closing prices: %K = position of the close inside
-// the N-period closing range, %D = 3-period simple average of %K.
-STOCH(data, N, smooth = 3) {
-    const k = [];
-    for (let i = N - 1; i < data.length; i++) {
-        let low = Infinity, high = -Infinity;
-        for (let j = i - N + 1; j <= i; j++) {
-            if (data[j] < low) low = data[j];
-            if (data[j] > high) high = data[j];
-        }
-        k.push(high > low ? (data[i] - low) / (high - low) * 100 : 50);
-    }
-    return { k, d: k.length >= smooth ? this.SMA(k, smooth) : [] };
-}
-bollingerband(data, N, K) {
-    const bands = [];
-    if (N <= 1) {
-        console.log("BB: N period of moving average should be grater than 1.");
-        return [];
-    }
-    for (let i = N - 1, n = data.length; i < n; i++) {
-        let slc = data.slice(i + 1 - N, i + 1),
-            m = slc.reduce((a, b) => a + b) / slc.length,
-            s = Math.sqrt(slc.map(x => Math.pow(x - m, 2)).reduce((a, b) => a + b) / slc.length);
-        bands.push({ low: m - (s * K), high: m + (s * K) });
-    }
-    return bands;
 }
 
 }
