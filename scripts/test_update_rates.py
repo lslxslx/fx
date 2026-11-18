@@ -203,6 +203,41 @@ class UpdateTests(unittest.TestCase):
         days = [r["Data"] for r in json.loads((self.data / "eur.json").read_bytes())]
         self.assertEqual(days, ["2026-11-16", "2026-11-12", "2026-11-11"])
 
+    def test_summary_has_latest_and_previous_rate(self):
+        changes = self.plan()
+        summary = updater.plan_summary(self.data, changes)
+        self.assertEqual(summary.path.name, "latest.json")
+        self.assertIsNone(summary.before)
+        updater.write_changes(changes + [summary])
+        latest = json.loads((self.data / "latest.json").read_bytes())
+        self.assertEqual(list(latest), list(updater.CODES))
+        self.assertEqual(latest["EUR"]["current"], {"Data": "2026-11-13", "EUR": float(RATES["EUR"])})
+        self.assertEqual(latest["EUR"]["previous"], {"Data": "2026-11-12", "EUR": float(RATES["EUR"])})
+        self.assertEqual(latest["JPY"]["unit"], 100)
+        self.assertEqual(latest["USD"]["unit"], 1)
+
+    def test_summary_rerun_is_noop(self):
+        changes = self.plan()
+        updater.write_changes(changes + [updater.plan_summary(self.data, changes)])
+        self.assertIsNone(updater.plan_summary(self.data, []))
+
+    def test_stale_summary_is_rebuilt_without_new_rates(self):
+        changes = self.plan()
+        updater.write_changes(changes)
+        (self.data / "latest.json").write_text("{}", encoding="utf-8")
+        summary = updater.plan_summary(self.data, [])
+        self.assertIsNotNone(summary)
+        updater.write_changes([summary])
+        self.assertEqual(json.loads((self.data / "latest.json").read_bytes())["CAD"]["current"]["Data"], "2026-11-13")
+
+    def test_new_summary_file_is_removed_on_failure(self):
+        changes = self.plan()
+        summary = updater.plan_summary(self.data, changes)
+        (self.data / "xag.json").write_text("user edit")
+        with self.assertRaises(updater.ValidationError):
+            updater.write_changes(changes + [summary])
+        self.assertFalse((self.data / "latest.json").exists())
+
     def test_incomplete_rate_set(self):
         with self.assertRaises(updater.ValidationError):
             updater.plan_updates(self.data, PUBLISHED, {"EUR": RATES["EUR"]})

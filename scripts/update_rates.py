@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Update the nine FX histories from Bank of Albania. Dry-run unless --write."""
+"""Update the nine FX histories from Bank of Albania, and data/latest.json (the
+latest and previous rate of each currency, read by the page at start-up).
+Dry-run unless --write."""
 
 from __future__ import annotations
 
@@ -248,8 +250,12 @@ def load_history(raw: bytes, code: str) -> list[dict]:
 @dataclass(frozen=True)
 class Change:
     path: Path
-    before: bytes
+    before: bytes | None  # None: the file does not exist yet
     after: bytes
+
+
+# Units as published by the Bank: JPY per 100 yen, metals per troy ounce.
+UNITS = {"JPY": 100}
 
 
 def plan_updates(data_dir: Path, published: date, rates: dict[str, Decimal]) -> list[Change]:
@@ -282,6 +288,36 @@ def plan_updates(data_dir: Path, published: date, rates: dict[str, Decimal]) -> 
     return changes
 
 
+def plan_summary(data_dir: Path, changes: list[Change]) -> Change | None:
+    """latest.json from the histories as they will be after `changes`: per currency
+    the newest and the previous record, so the page does not need nine histories to
+    show today's rates. Returns None when the file is already up to date."""
+    pending = {change.path.name: change.after for change in changes}
+    summary = {}
+    for code in CODES:
+        name = f"{code.lower()}.json"
+        raw = pending.get(name)
+        if raw is None:
+            raw = (data_dir / name).read_bytes()
+        rows = sorted(load_history(raw, code), key=lambda row: row["Data"], reverse=True)
+        if not rows:
+            raise ValidationError(f"{code}: empty history, cannot build latest.json")
+        summary[code] = {"current": rows[0], "previous": rows[1] if len(rows) > 1 else rows[0],
+                         "unit": UNITS.get(code, 1)}
+    after = (json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    path = data_dir / "latest.json"
+    if path.is_symlink():
+        raise ValidationError(f"Refusing symlink: {path}")
+    before = path.read_bytes() if path.exists() else None
+    return None if before == after else Change(path, before, after)
+
+
+def current_bytes(path: Path) -> bytes | None:
+    if path.is_symlink():
+        raise ValidationError(f"Refusing symlink: {path}")
+    return path.read_bytes() if path.exists() else None
+
+
 def stage_bytes(path: Path, content: bytes) -> Path:
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temp = Path(name)
@@ -290,7 +326,7 @@ def stage_bytes(path: Path, content: bytes) -> Path:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(temp, path.stat().st_mode & 0o777)
+        os.chmod(temp, path.stat().st_mode & 0o777 if path.exists() else 0o644)
         return temp
     except BaseException:
         temp.unlink(missing_ok=True)
@@ -304,11 +340,11 @@ def write_changes(changes: list[Change]) -> None:
     replaced: list[Change] = []
     try:
         for change in changes:
-            if change.path.is_symlink() or change.path.read_bytes() != change.before:
+            if current_bytes(change.path) != change.before:
                 raise ValidationError(f"File changed during update: {change.path}")
             staged.append((change, stage_bytes(change.path, change.after)))
         for change, temp in staged:
-            if change.path.is_symlink() or change.path.read_bytes() != change.before:
+            if current_bytes(change.path) != change.before:
                 raise ValidationError(f"File changed during update: {change.path}")
             os.replace(temp, change.path)
             replaced.append(change)
@@ -316,6 +352,9 @@ def write_changes(changes: list[Change]) -> None:
         # Best-effort rollback for ordinary disk errors; not a cross-file transaction
         # against sudden power loss. The Actions runner is disposable on failure.
         for change in reversed(replaced):
+            if change.before is None:
+                change.path.unlink(missing_ok=True)
+                continue
             rollback = stage_bytes(change.path, change.before)
             try:
                 os.replace(rollback, change.path)
@@ -337,6 +376,9 @@ def main(argv=None) -> int:
         html = args.html.read_text(encoding="utf-8") if args.html else fetch_source()
         published, rates = parse_source(html)
         changes = plan_updates(args.data_dir, published, rates)
+        summary = plan_summary(args.data_dir, changes)
+        if summary is not None:
+            changes.append(summary)
         print(f"Source: {SOURCE_URL}\nPublication date: {published}")
         for code in CODES:
             print(f"  {code}: {rates[code]}")
