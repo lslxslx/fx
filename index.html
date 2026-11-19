@@ -42,7 +42,7 @@
             <div id="cpanel">
                 <details class="section" id="sec-currency" open>
                     <summary>Currency <span class="summary-note" id="updated"></span></summary>
-                    <div id="currency" class="rate-board">
+                    <div id="currency" class="cell-grid cols-3 rate-board">
                         <input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR"><b>EUR</b><span class="rate" data-rate="EUR">…</span><span class="change" data-percent="EUR"></span></label>
                         <input type="radio" name="currency" id="USD" value="USD"><label for="USD"><b>USD</b><span class="rate" data-rate="USD">…</span><span class="change" data-percent="USD"></span></label>
                         <input type="radio" name="currency" id="GBP" value="GBP"><label for="GBP"><b>GBP</b><span class="rate" data-rate="GBP">…</span><span class="change" data-percent="GBP"></span></label>
@@ -57,13 +57,13 @@
 
                 <details class="section" id="sec-period" open>
                     <summary>Period</summary>
-                    <div class="segmented" role="radiogroup" aria-label="Interval">
+                    <div class="cell-grid cols-4 segmented" role="radiogroup" aria-label="Interval">
                         <input type="radio" name="interval" id="daily" value="daily" checked><label for="daily" title="Daily">Day</label>
                         <input type="radio" name="interval" id="weekly" value="wave"><label for="weekly" title="Weekly (average of the week)">Week</label>
                         <input type="radio" name="interval" id="monthly" value="mave"><label for="monthly" title="Monthly (average of the month)">Month</label>
                         <input type="radio" name="interval" id="quarterly" value="quave"><label for="quarterly" title="Quarterly (average of the quarter)">Quarter</label>
                     </div>
-                    <div class="range-grid" id="range" role="radiogroup" aria-label="Range">
+                    <div class="cell-grid cols-5 range-grid" id="range" role="radiogroup" aria-label="Range">
                             <input type="radio" name="ix" id="ix1" value="1"><label for="ix1">1M</label>
                             <input type="radio" name="ix" id="ix3" value="3"><label for="ix3">3M</label>
                             <input type="radio" name="ix" id="ix6" value="6"><label for="ix6">6M</label>
@@ -75,11 +75,13 @@
                             <input type="radio" name="ix" id="ix240" value="240"><label for="ix240">20Y</label>
                             <input type="radio" name="ix" id="ix0" value="0"><label for="ix0">Max</label>
                     </div>
-                    <div class="date-range">
-                        <label class="field"><span>From</span><input type="date" min="1991-01-01" id="start"></label>
-                        <label class="field"><span>To</span><input type="date" min="1991-01-01" id="end"></label>
-                        <button type="button" id="range-clear" class="button quiet">Clear</button>
-                        <button type="button" id="range-apply" class="button">Apply dates</button>
+                    <div class="option-list date-range">
+                        <label class="field-row"><span>From</span><input type="date" min="1991-01-01" id="start"></label>
+                        <label class="field-row"><span>To</span><input type="date" min="1991-01-01" id="end"></label>
+                        <div class="option-actions">
+                            <button type="button" id="range-clear">Clear</button>
+                            <button type="button" id="range-apply" class="primary">Apply dates</button>
+                        </div>
                     </div>
                 </details>
 
@@ -108,8 +110,8 @@
                             <input type="checkbox" id="macd"><label for="macd" class="switch"><span class="name">MACD</span><span class="desc">Momentum</span></label>
                             <span class="params"><input type="text" inputmode="numeric" id="macd_fast" placeholder="8" title="MACD fast period" aria-label="MACD fast period"><input type="text" inputmode="numeric" id="macd_slow" placeholder="17" title="MACD slow period" aria-label="MACD slow period"><input type="text" inputmode="numeric" id="macd_signal" placeholder="9" title="MACD signal period" aria-label="MACD signal period"></span>
                         </div>
-                        <div class="option-row sub">
-                            <input type="checkbox" id="macdh"><label for="macdh" class="switch"><span class="name">Histogram</span><span class="desc">MACD minus signal</span></label>
+                        <div class="option-row">
+                            <input type="checkbox" id="macdh"><label for="macdh" class="switch"><span class="name">MACD histogram</span><span class="desc">MACD minus signal</span></label>
                             <span class="params"></span>
                         </div>
                         <div class="option-row">
