@@ -7,6 +7,20 @@
 :root {
 	--font-family: 'Noto Sans', sans-serif;
 
+	/* type scale: four steps, one rem = 10px. Emphasis comes from weight and
+	   colour, not from extra sizes.
+	   2xs  10px  tiny chart labels, the (100) after JPY
+	   xs   11px  descriptions, notes, axes, footer, changes in the currency list
+	   sm   12px  secondary labels: ruler, help, status, section notes
+	   md   13px  body, controls, names, rates, values
+	   lg   14px  section titles */
+	--fs-2xs: 1rem;
+	--fs-xs: 1.1rem;
+	--fs-sm: 1.2rem;
+	--fs-md: 1.3rem;
+	--fs-lg: 1.4rem;
+	--fs-icon: 1.6rem;
+
 	/* page: cool blue-grey, the accent is the colour of the price line */
 	--ink: #1f2a33;
 	--muted: #66727d;
@@ -160,7 +174,7 @@ body {
 	margin: 0;
 	font-family: var(--font-family);
 	font-optical-sizing: auto;
-	font-size: 1.4rem;
+	font-size: var(--fs-md);
 	line-height: 1.45;
 	color: var(--ink);
 	background: var(--page);
@@ -218,7 +232,7 @@ article svg {
 footer {
 	margin: 4rem 0 2rem;
 	padding: 0 1rem;
-	font-size: 1.1rem;
+	font-size: var(--fs-xs);
 	color: var(--muted);
 	text-align: right;
 }
@@ -456,7 +470,7 @@ footer p {
 	list-style: none;
 	cursor: pointer;
 	padding: 1.1rem 0;
-	font-size: 1.4rem;
+	font-size: var(--fs-lg);
 	font-weight: 600;
 }
 
@@ -485,7 +499,7 @@ footer p {
 }
 
 .summary-note {
-	font-size: 1.2rem;
+	font-size: var(--fs-sm);
 	font-weight: 400;
 	color: var(--muted);
 }
@@ -507,7 +521,7 @@ select {
 	min-width: 0;
 	height: 3.4rem;
 	font: inherit;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	color: var(--ink);
 	background: var(--sunken);
 	border: 1px solid var(--rule);
@@ -537,7 +551,7 @@ input:focus-visible + label {
 .button {
 	height: 3.4rem;
 	font: inherit;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	font-weight: 600;
 	color: var(--accent-ink);
 	background: var(--accent);
@@ -575,7 +589,7 @@ input:focus-visible + label {
 	border: 1px solid var(--rule);
 	border-radius: .6rem;
 	background: var(--sunken);
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	cursor: pointer;
 	user-select: none;
 	white-space: nowrap;
@@ -640,7 +654,7 @@ input:checked + .toggle {
 }
 
 .rate-list b {
-	font-size: 1.35rem;
+	font-size: var(--fs-md);
 	font-weight: 500;
 	white-space: nowrap;
 }
@@ -653,7 +667,7 @@ input:checked + .toggle {
 .rate-list b small {
 	font-weight: 400;
 	color: var(--muted);
-	font-size: 1rem;
+	font-size: var(--fs-2xs);
 }
 
 .rate-list .rate,
@@ -664,7 +678,7 @@ input:checked + .toggle {
 }
 
 .rate-list .rate {
-	font-size: 1.35rem;
+	font-size: var(--fs-md);
 	font-weight: 500;
 	color: var(--ink);
 }
@@ -674,7 +688,7 @@ input:checked + .toggle {
 
 .rate-list .change,
 .rate-list .delta {
-	font-size: 1.2rem;
+	font-size: var(--fs-xs);
 	color: var(--muted);
 }
 
@@ -699,19 +713,6 @@ input:checked + .toggle {
 	.rate-list .change {
 		padding-left: 10px;
 	}
-
-	.rate-list b {
-		font-size: 13px;
-	}
-
-	.rate-list .rate {
-		font-size: 14px;
-	}
-
-	.rate-list .change,
-	.rate-list .delta {
-		font-size: 11.5px;
-	}
 }
 
 @container currency (max-width: 289px) {
@@ -724,17 +725,14 @@ input:checked + .toggle {
 		padding-left: 6px;
 	}
 
-	.rate-list b {
-		font-size: 12px;
-	}
-
+	.rate-list b,
 	.rate-list .rate {
-		font-size: 12.5px;
+		font-size: var(--fs-sm);
 	}
 
 	.rate-list .change,
 	.rate-list .delta {
-		font-size: 10.5px;
+		font-size: var(--fs-2xs);
 	}
 }
 
@@ -750,12 +748,12 @@ input:checked + .toggle {
 
 	.rate-list b,
 	.rate-list .rate {
-		font-size: 11.5px;
+		font-size: var(--fs-xs);
 	}
 
 	.rate-list .change,
 	.rate-list .delta {
-		font-size: 10px;
+		font-size: var(--fs-2xs);
 	}
 }
 
@@ -802,7 +800,7 @@ input:checked + .toggle {
 
 .segmented label {
 	height: 3.6rem;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 }
 
 /* range: a logarithmic ruler, 1M on the left, Max on the right. The labels sit
@@ -836,7 +834,7 @@ input:checked + .toggle {
 	flex-direction: column;
 	align-items: center;
 	gap: .5rem;
-	font-size: 1.2rem;
+	font-size: var(--fs-sm);
 	color: var(--muted);
 	white-space: nowrap;
 	pointer-events: none;
@@ -864,7 +862,7 @@ input:checked + .toggle {
 	border-radius: .6rem;
 	background: var(--accent);
 	color: var(--accent-ink);
-	font-size: 1.2rem;
+	font-size: var(--fs-sm);
 	font-weight: 600;
 	white-space: nowrap;
 	pointer-events: none;
@@ -887,7 +885,7 @@ input:checked + .toggle {
 	}
 
 	.ruler label {
-		font-size: 1.1rem;
+		font-size: var(--fs-xs);
 	}
 }
 
@@ -912,7 +910,7 @@ input:checked + .toggle {
 	gap: .8rem;
 	min-height: 4.6rem;
 	padding: 0 .8rem 0 1.2rem;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	cursor: pointer;
 }
 
@@ -969,7 +967,7 @@ input:checked + .toggle {
 	width: 100%;
 	min-height: 4.4rem;
 	font: inherit;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	font-weight: 600;
 	color: var(--accent);
 	background: none;
@@ -1069,14 +1067,14 @@ input:checked + .switch::after {
 }
 
 .switch .name {
-	font-size: 1.35rem;
+	font-size: var(--fs-md);
 	font-weight: 600;
 	line-height: 1.2;
 }
 
 .switch .desc {
 	grid-column: 2;
-	font-size: 1.1rem;
+	font-size: var(--fs-xs);
 	color: var(--muted);
 	line-height: 1.25;
 	overflow: hidden;
@@ -1145,7 +1143,7 @@ select {
 	width: 3.2rem;
 	height: 3.2rem;
 	font: inherit;
-	font-size: 1.8rem;
+	font-size: var(--fs-icon);
 	line-height: 1;
 	color: var(--muted);
 	background: none;
@@ -1164,7 +1162,7 @@ select {
 	width: 100%;
 	min-height: 4.4rem;
 	font: inherit;
-	font-size: 1.3rem;
+	font-size: var(--fs-md);
 	color: var(--accent);
 	background: none;
 	border: 0;
@@ -1220,7 +1218,7 @@ select {
 	border: 0;
 	background: none;
 	text-align: left;
-	font-size: 1.5rem;
+	font-size: var(--fs-md);
 	font-weight: 500;
 }
 
@@ -1231,7 +1229,7 @@ select {
 }
 
 #q-result {
-	font-size: 1.5rem;
+	font-size: var(--fs-md);
 	font-weight: 600;
 	color: var(--accent);
 	font-variant-numeric: tabular-nums;
@@ -1252,7 +1250,7 @@ select {
 	border: 1px solid var(--rule);
 	background: var(--surface);
 	color: var(--muted);
-	font-size: 1.5rem;
+	font-size: var(--fs-lg);
 	line-height: 1;
 	cursor: pointer;
 }
@@ -1268,7 +1266,7 @@ select {
 	margin: 0;
 	padding: .9rem 1.2rem;
 	border-top: 1px solid var(--rule);
-	font-size: 1.15rem;
+	font-size: var(--fs-xs);
 	color: var(--muted);
 	font-variant-numeric: tabular-nums;
 }
@@ -1279,7 +1277,7 @@ select {
 
 #help p {
 	margin: .8rem 0 0;
-	font-size: 1.2rem;
+	font-size: var(--fs-sm);
 	color: var(--muted);
 }
 
@@ -1290,7 +1288,7 @@ select {
 /* messages above the chart (data errors) */
 #data-status {
 	margin: .6rem 1rem;
-	font-size: 1.2rem;
+	font-size: var(--fs-sm);
 	color: var(--down);
 }
 
@@ -1301,7 +1299,7 @@ select {
 /* ===== Chart ==================================================================== */
 
 svg text {
-	font-size: 1.1rem;
+	font-size: var(--fs-xs);
 	font-family: var(--font-family);
 	pointer-events: none;
 }
@@ -1450,7 +1448,7 @@ path.trend {
 
 .fib-label {
 	fill: var(--fib-color);
-	font-size: 1rem !important;
+	font-size: var(--fs-2xs) !important;
 }
 
 /* information markers and their dialog */
@@ -1502,7 +1500,7 @@ article svg [tabindex]:focus-visible {
 
 @media screen and (max-width: 386px) {
 	.tick text {
-		font-size: 1rem;
+		font-size: var(--fs-2xs);
 	}
 }
 
