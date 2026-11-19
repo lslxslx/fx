@@ -319,7 +319,7 @@ footer p {
 		top: 0;
 		right: 0;
 		bottom: 0;
-		width: min(32rem, calc(100vw - 4.8rem));
+		width: min(33.3rem, calc(100vw - 4rem));
 		overflow-y: auto;
 		overscroll-behavior: contain;
 		touch-action: pan-y;
@@ -687,25 +687,48 @@ input:checked + .toggle {
 
 @container currency (max-width: 345px) {
 	.rate-list label {
-		column-gap: 7px;
-		padding: 9px 9px;
+		column-gap: 9px;
+		padding: 10px 10px;
 	}
 
-	.rate-list b,
+	.rate-list b {
+		font-size: 13px;
+	}
+
+	.rate-list .rate {
+		font-size: 14px;
+	}
+
+	.rate-list .change,
+	.rate-list .delta {
+		font-size: 11.5px;
+	}
+}
+
+@container currency (max-width: 289px) {
+	.rate-list label {
+		column-gap: 6px;
+		padding: 9px 8px;
+	}
+
+	.rate-list b {
+		font-size: 12px;
+	}
+
 	.rate-list .rate {
 		font-size: 12.5px;
 	}
 
 	.rate-list .change,
 	.rate-list .delta {
-		font-size: 11px;
+		font-size: 10.5px;
 	}
 }
 
-@container currency (max-width: 289px) {
+@container currency (max-width: 259px) {
 	.rate-list label {
-		column-gap: 5px;
-		padding: 9px 7px;
+		column-gap: 4px;
+		padding: 8px 6px;
 	}
 
 	.rate-list b,
@@ -715,7 +738,7 @@ input:checked + .toggle {
 
 	.rate-list .change,
 	.rate-list .delta {
-		font-size: 10.2px;
+		font-size: 10px;
 	}
 }
 
@@ -867,7 +890,7 @@ input:checked + .toggle {
 /* custom dates: a list with From, To and the two actions at the bottom */
 .field-row {
 	display: grid;
-	grid-template-columns: 1fr 15rem;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
 	align-items: center;
 	gap: .8rem;
 	min-height: 4.6rem;
@@ -881,9 +904,24 @@ input:checked + .toggle {
 }
 
 .field-row input {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
 	height: 3.2rem;
 	background: var(--surface);
 	padding: 0 .6rem;
+	-webkit-appearance: none;
+	appearance: none;
+	text-align: left;
+}
+
+.field-row input::-webkit-date-and-time-value {
+	text-align: left;
+}
+
+.field-row input::-webkit-calendar-picker-indicator {
+	margin-left: auto;
 }
 
 /* the From / To rows open under the switch; closed, they take no room and

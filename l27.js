@@ -342,6 +342,7 @@ class HistoricalPriceChart {
       // "Custom dates" only opens the fields; turning it off drops applied dates.
       if (target.id === 'custom') {
         if (!target.checked) this.clearDateRange(Boolean(this.dateRange.fd || this.dateRange.td));
+        else this.prefillDates();
         return;
       }
       if (target.matches('input[name=currency], input[name=interval], input[name=ix]')) {
@@ -563,7 +564,16 @@ class HistoricalPriceChart {
     this.reloadData();
   }
 
-  clearDateRange(reload) {
+  // Empty date fields start from the dates the chart shows now (iOS draws an empty
+  // date field as a blank box).
+  prefillDates() {
+    const data = this.currentData || [], day = date => date ? d3.utcFormat('%Y-%m-%d')(date) : '';
+    const start = document.getElementById('start'), end = document.getElementById('end');
+    if (start && !start.value) start.value = day(data[data.length - 1]?.date);
+    if (end && !end.value) end.value = day(data[0]?.date);
+  }
+
+    clearDateRange(reload) {
     for (const id of ['start', 'end']) { const input = document.getElementById(id); if (input) input.value = ''; }
     const custom = document.getElementById('custom');
     if (custom) custom.checked = false;
