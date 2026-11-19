@@ -109,9 +109,11 @@ window.ForexData = (() => {
         const rate = document.querySelector(`[data-rate="${c}"]`), percent = document.querySelector(`[data-percent="${c}"]`);
         if (rate) rate.textContent = formatFxNumber(value);
         if (percent) {
-          percent.textContent = before ? (delta > 0 ? '+' : '') + (100 * delta / before).toFixed(2) + '%' : '—';
-          percent.className = delta > 0 ? 'grc' : (delta < 0 ? 'rec' : '');
+          percent.textContent = before ? (delta > 0 ? '+' : '') + (100 * delta / before).toFixed(2).replace('-', '−') + '%' : '—';
         }
+        if (rate) rate.className = 'rate ' + (delta > 0 ? 'grc' : (delta < 0 ? 'rec' : ''));
+        const change = document.querySelector(`[data-delta="${c}"]`);
+        if (change) change.textContent = (delta > 0 ? '+' : '') + formatFxNumber(delta);
         const label = document.querySelector(`label[for="${c}"]`);
         if (label) label.title = (row.unit === 100 ? 'Rate for 100 ' + c + '. ' : '') + row.current.Data +
           ': ' + formatFxNumber(value) + ', previous ' + row.previous.Data + ': ' + formatFxNumber(before) +

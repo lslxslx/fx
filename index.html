@@ -42,28 +42,28 @@
             <div id="cpanel">
                 <details class="section" id="sec-currency" open>
                     <summary>Currency <span class="summary-note" id="updated"></span></summary>
-                    <div id="currency" class="cell-grid cols-3 rate-board">
-                        <input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR"><b>EUR</b><span class="rate" data-rate="EUR">…</span><span class="change" data-percent="EUR"></span></label>
-                        <input type="radio" name="currency" id="USD" value="USD"><label for="USD"><b>USD</b><span class="rate" data-rate="USD">…</span><span class="change" data-percent="USD"></span></label>
-                        <input type="radio" name="currency" id="GBP" value="GBP"><label for="GBP"><b>GBP</b><span class="rate" data-rate="GBP">…</span><span class="change" data-percent="GBP"></span></label>
-                        <input type="radio" name="currency" id="CHF" value="CHF"><label for="CHF"><b>CHF</b><span class="rate" data-rate="CHF">…</span><span class="change" data-percent="CHF"></span></label>
-                        <input type="radio" name="currency" id="JPY" value="JPY"><label for="JPY" title="Rate for 100 JPY"><b>JPY <small>×100</small></b><span class="rate" data-rate="JPY">…</span><span class="change" data-percent="JPY"></span></label>
-                        <input type="radio" name="currency" id="AUD" value="AUD"><label for="AUD"><b>AUD</b><span class="rate" data-rate="AUD">…</span><span class="change" data-percent="AUD"></span></label>
-                        <input type="radio" name="currency" id="CAD" value="CAD"><label for="CAD"><b>CAD</b><span class="rate" data-rate="CAD">…</span><span class="change" data-percent="CAD"></span></label>
-                        <input type="radio" name="currency" id="XAU" value="XAU"><label for="XAU" title="Gold, one troy ounce"><b>XAU</b><span class="rate" data-rate="XAU">…</span><span class="change" data-percent="XAU"></span></label>
-                        <input type="radio" name="currency" id="XAG" value="XAG"><label for="XAG" title="Silver, one troy ounce"><b>XAG</b><span class="rate" data-rate="XAG">…</span><span class="change" data-percent="XAG"></span></label>
+                    <div id="currency" class="tiles cols-3 rate-board">
+                        <input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR"><b>EUR</b><span class="rate" data-rate="EUR">…</span><span class="change" data-percent="EUR"></span><span class="delta" data-delta="EUR"></span></label>
+                        <input type="radio" name="currency" id="USD" value="USD"><label for="USD"><b>USD</b><span class="rate" data-rate="USD">…</span><span class="change" data-percent="USD"></span><span class="delta" data-delta="USD"></span></label>
+                        <input type="radio" name="currency" id="GBP" value="GBP"><label for="GBP"><b>GBP</b><span class="rate" data-rate="GBP">…</span><span class="change" data-percent="GBP"></span><span class="delta" data-delta="GBP"></span></label>
+                        <input type="radio" name="currency" id="CHF" value="CHF"><label for="CHF"><b>CHF</b><span class="rate" data-rate="CHF">…</span><span class="change" data-percent="CHF"></span><span class="delta" data-delta="CHF"></span></label>
+                        <input type="radio" name="currency" id="JPY" value="JPY"><label for="JPY" title="Rate for 100 JPY"><b>JPY <small>×100</small></b><span class="rate" data-rate="JPY">…</span><span class="change" data-percent="JPY"></span><span class="delta" data-delta="JPY"></span></label>
+                        <input type="radio" name="currency" id="AUD" value="AUD"><label for="AUD"><b>AUD</b><span class="rate" data-rate="AUD">…</span><span class="change" data-percent="AUD"></span><span class="delta" data-delta="AUD"></span></label>
+                        <input type="radio" name="currency" id="CAD" value="CAD"><label for="CAD"><b>CAD</b><span class="rate" data-rate="CAD">…</span><span class="change" data-percent="CAD"></span><span class="delta" data-delta="CAD"></span></label>
+                        <input type="radio" name="currency" id="XAU" value="XAU"><label for="XAU" title="Gold, one troy ounce"><b>XAU</b><span class="rate" data-rate="XAU">…</span><span class="change" data-percent="XAU"></span><span class="delta" data-delta="XAU"></span></label>
+                        <input type="radio" name="currency" id="XAG" value="XAG"><label for="XAG" title="Silver, one troy ounce"><b>XAG</b><span class="rate" data-rate="XAG">…</span><span class="change" data-percent="XAG"></span><span class="delta" data-delta="XAG"></span></label>
                     </div>
                 </details>
 
                 <details class="section" id="sec-period" open>
                     <summary>Period</summary>
-                    <div class="cell-grid cols-4 segmented" role="radiogroup" aria-label="Interval">
+                    <div class="tiles cols-4 segmented" role="radiogroup" aria-label="Interval">
                         <input type="radio" name="interval" id="daily" value="daily" checked><label for="daily" title="Daily">Day</label>
                         <input type="radio" name="interval" id="weekly" value="wave"><label for="weekly" title="Weekly (average of the week)">Week</label>
                         <input type="radio" name="interval" id="monthly" value="mave"><label for="monthly" title="Monthly (average of the month)">Month</label>
                         <input type="radio" name="interval" id="quarterly" value="quave"><label for="quarterly" title="Quarterly (average of the quarter)">Quarter</label>
                     </div>
-                    <div class="cell-grid cols-5 range-grid" id="range" role="radiogroup" aria-label="Range">
+                    <div class="tiles cols-5 range-grid" id="range" role="radiogroup" aria-label="Range">
                             <input type="radio" name="ix" id="ix1" value="1"><label for="ix1">1M</label>
                             <input type="radio" name="ix" id="ix3" value="3"><label for="ix3">3M</label>
                             <input type="radio" name="ix" id="ix6" value="6"><label for="ix6">6M</label>

@@ -22,6 +22,9 @@
 	--chart-bg: #ffffff;
 	--update-bg: #fff960;
 	--knob: #ffffff;
+	--tile: #eceff2;
+	--tile-hover: #e3e7eb;
+	--tile-on: #d8dee4;
 	--update-color: #1a1a1a;
 
 	/* chart: axes and grid */
@@ -87,6 +90,9 @@
 		--down: #f07070;
 		--chart-bg: #0e151c;
 		--knob: #d5dde4;
+		--tile: #17212b;
+		--tile-hover: #1d2934;
+		--tile-on: #283745;
 
 		--axis-domainc: #6c727c;
 		--axis-textc: #8a9099;
@@ -505,43 +511,50 @@ input:checked + .toggle {
 	color: var(--accent-ink);
 }
 
-/* ===== Cell grids: currency, interval, range ======================================
-   One frame per group, hairlines between the cells (the gap shows the frame colour
-   underneath), the same surface as the option lists below. */
+/* ===== Tiles: currency, interval, range ==========================================
+   Separate soft tiles with clean gaps, no frames. The chosen tile is a shade
+   darker and its label takes the accent colour. */
 
-.cell-grid {
+.tiles {
 	display: grid;
-	gap: 1px;
-	background: var(--rule);
-	border: 1px solid var(--rule);
-	border-radius: .8rem;
-	overflow: hidden;
+	gap: .6rem;
 }
 
-.cell-grid + .cell-grid,
-.cell-grid + .option-list {
-	margin-top: .8rem;
+.tiles + .tiles,
+.tiles + .option-list {
+	margin-top: .6rem;
 }
 
 .cols-3 { grid-template-columns: repeat(3, 1fr); }
 .cols-4 { grid-template-columns: repeat(4, 1fr); }
 .cols-5 { grid-template-columns: repeat(5, 1fr); }
 
-.cell-grid label {
+.tiles label {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: var(--sunken);
+	background: var(--tile);
+	border-radius: .7rem;
 	cursor: pointer;
 	font-variant-numeric: tabular-nums;
-	position: relative;
+	transition: background-color .12s;
 }
 
-.cell-grid label:hover {
-	background: var(--surface);
+.tiles label:hover {
+	background: var(--tile-hover);
 }
 
-/* interval and range: the chosen cell is filled with the accent */
+.tiles input:checked + label {
+	background: var(--tile-on);
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.tiles input:focus-visible + label {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
 .segmented label {
 	height: 3.6rem;
 	font-size: 1.3rem;
@@ -552,28 +565,26 @@ input:checked + .toggle {
 	font-size: 1.25rem;
 }
 
-.segmented input:checked + label,
-.range-grid input:checked + label {
-	background: var(--accent);
-	color: var(--accent-ink);
-	font-weight: 600;
-}
-
-/* a custom date range is active: the range buttons step back */
+/* a custom date range is active: the range tiles step back */
 .range-grid.inactive {
 	opacity: .4;
 }
 
-/* currency: code, rate, change; a thin line at the bottom shows the direction */
+/* currency: code, rate (coloured by direction), change in percent and in value */
 .rate-board label {
 	flex-direction: column;
-	gap: .1rem;
-	padding: .8rem .2rem .9rem;
+	gap: .2rem;
+	padding: 1rem .2rem;
 	text-align: center;
 }
 
 .rate-board b {
-	font-size: 1.3rem;
+	font-size: 1.4rem;
+	font-weight: 500;
+	margin-bottom: .1rem;
+}
+
+.rate-board input:checked + label b {
 	font-weight: 600;
 }
 
@@ -584,44 +595,22 @@ input:checked + .toggle {
 }
 
 .rate-board .rate {
-	font-size: 1.3rem;
+	font-size: 1.35rem;
+	font-weight: 500;
+	white-space: nowrap;
+	color: var(--ink);
+}
+
+.rate-board .change,
+.rate-board .delta {
+	font-size: 1.15rem;
+	font-weight: 400;
+	color: var(--muted);
 	white-space: nowrap;
 }
 
-.rate-board .change {
-	font-size: 1.1rem;
-	color: var(--muted);
-}
-
-.rate-board label::after {
-	content: '';
-	position: absolute;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	height: 2px;
-}
-
-.rate-board label:has(.grc)::after {
-	background: var(--up);
-}
-
-.rate-board label:has(.rec)::after {
-	background: var(--down);
-}
-
-.rate-board input:checked + label {
-	background: var(--accent-soft);
-	box-shadow: inset 0 0 0 2px var(--accent);
-}
-
-.grc {
-	color: var(--up) !important;
-}
-
-.rec {
-	color: var(--down) !important;
-}
+.rate-board .rate.grc { color: var(--up); }
+.rate-board .rate.rec { color: var(--down); }
 
 /* custom dates: a list with From, To and the two actions at the bottom */
 .field-row {
