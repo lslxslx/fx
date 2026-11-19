@@ -510,10 +510,7 @@ class HistoricalPriceChart {
     const remove = document.createElement('button');
     remove.type = 'button'; remove.className = 'ma-remove'; remove.textContent = '×';
     remove.title = 'Remove'; remove.setAttribute('aria-label', 'Remove moving average');
-    const typeWrap = document.createElement('span');
-    typeWrap.className = 'ma-type-wrap';
-    typeWrap.append(select, swatch);
-    row.append(typeWrap, input, remove);
+    row.append(swatch, select, input, remove);
     list.appendChild(row);
     this.updateMovingAverageButton();
     return row;

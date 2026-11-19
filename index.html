@@ -85,49 +85,59 @@
 
                 <details class="section" id="overlays" open>
                     <summary>Overlays</summary>
-                    <div id="ma-list" aria-label="Moving averages"></div>
-                    <button type="button" id="ma-add" class="button dashed">Add moving average</button>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="bband"><label for="bband" class="toggle">Bollinger</label></span>
-                        <span></span>
-                        <input type="text" inputmode="numeric" id="bb_N" placeholder="20" title="Period" aria-label="Bollinger period">
-                        <input type="text" inputmode="decimal" id="bb_K" placeholder="2" title="Standard deviations" aria-label="Bollinger deviations">
+                    <div class="option-list">
+                        <div id="ma-list" aria-label="Moving averages"></div>
+                        <button type="button" id="ma-add" class="option-add">Add moving average</button>
                     </div>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="fib"><label for="fib" class="toggle" title="Fibonacci retracement of the visible range">Fibonacci</label></span>
+                    <div class="option-list">
+                        <div class="option-row">
+                            <input type="checkbox" id="bband"><label for="bband" class="switch"><span class="name">Bollinger Bands</span><span class="desc">Period, deviations</span></label>
+                            <span class="params"><input type="text" inputmode="numeric" id="bb_N" placeholder="20" title="Bollinger period" aria-label="Bollinger period"><input type="text" inputmode="decimal" id="bb_K" placeholder="2" title="Bollinger standard deviations" aria-label="Bollinger standard deviations"></span>
+                        </div>
+                        <div class="option-row">
+                            <input type="checkbox" id="fib"><label for="fib" class="switch"><span class="name">Fibonacci</span><span class="desc">Retracement of the visible range</span></label>
+                            <span class="params"></span>
+                        </div>
                     </div>
                 </details>
 
                 <details class="section" id="indicators" open>
                     <summary>Indicators</summary>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="macd"><label for="macd" class="toggle">MACD</label><input type="checkbox" id="macdh"><label for="macdh" class="toggle small" title="MACD histogram">Hist</label></span>
-                        <input type="text" inputmode="numeric" id="macd_fast" placeholder="8" title="Fast period" aria-label="MACD fast period">
-                        <input type="text" inputmode="numeric" id="macd_slow" placeholder="17" title="Slow period" aria-label="MACD slow period">
-                        <input type="text" inputmode="numeric" id="macd_signal" placeholder="9" title="Signal period" aria-label="MACD signal period">
-                    </div>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="roc"><label for="roc" class="toggle" title="Rate of change">ROC</label></span>
-                        <span></span><span></span>
-                        <input type="text" inputmode="numeric" id="roc_values" placeholder="12" title="Period" aria-label="ROC period">
-                    </div>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="rsi"><label for="rsi" class="toggle" title="Relative strength index">RSI</label></span>
-                        <span></span><span></span>
-                        <input type="text" inputmode="numeric" id="rsi_values" placeholder="14" title="Period" aria-label="RSI period">
-                    </div>
-                    <div class="param-row">
-                        <span class="toggles"><input type="checkbox" id="stoch"><label for="stoch" class="toggle" title="Stochastic oscillator">Stochastic</label></span>
-                        <span></span><span></span>
-                        <input type="text" inputmode="numeric" id="stoch_values" placeholder="14" title="Period" aria-label="Stochastic period">
+                    <div class="option-list">
+                        <div class="option-row">
+                            <input type="checkbox" id="macd"><label for="macd" class="switch"><span class="name">MACD</span><span class="desc">Momentum</span></label>
+                            <span class="params"><input type="text" inputmode="numeric" id="macd_fast" placeholder="8" title="MACD fast period" aria-label="MACD fast period"><input type="text" inputmode="numeric" id="macd_slow" placeholder="17" title="MACD slow period" aria-label="MACD slow period"><input type="text" inputmode="numeric" id="macd_signal" placeholder="9" title="MACD signal period" aria-label="MACD signal period"></span>
+                        </div>
+                        <div class="option-row sub">
+                            <input type="checkbox" id="macdh"><label for="macdh" class="switch"><span class="name">Histogram</span><span class="desc">MACD minus signal</span></label>
+                            <span class="params"></span>
+                        </div>
+                        <div class="option-row">
+                            <input type="checkbox" id="roc"><label for="roc" class="switch"><span class="name">ROC</span><span class="desc">Rate of change, period</span></label>
+                            <span class="params"><input type="text" inputmode="numeric" id="roc_values" placeholder="12" title="ROC period" aria-label="ROC period"></span>
+                        </div>
+                        <div class="option-row">
+                            <input type="checkbox" id="rsi"><label for="rsi" class="switch"><span class="name">RSI</span><span class="desc">Relative strength, period</span></label>
+                            <span class="params"><input type="text" inputmode="numeric" id="rsi_values" placeholder="14" title="RSI period" aria-label="RSI period"></span>
+                        </div>
+                        <div class="option-row">
+                            <input type="checkbox" id="stoch"><label for="stoch" class="switch"><span class="name">Stochastic</span><span class="desc">Closing range, period</span></label>
+                            <span class="params"><input type="text" inputmode="numeric" id="stoch_values" placeholder="14" title="Stochastic period" aria-label="Stochastic period"></span>
+                        </div>
                     </div>
                 </details>
 
                 <details class="section" id="tools" open>
                     <summary>Tools</summary>
-                    <div class="pair">
-                        <input type="checkbox" id="signals"><label for="signals" class="toggle" title="Mark moving average and MACD crossovers">Signals</label>
-                        <input type="checkbox" id="crosshair"><label for="crosshair" class="toggle" title="Date and value on the axes">Crosshair</label>
+                    <div class="option-list">
+                        <div class="option-row">
+                            <input type="checkbox" id="signals"><label for="signals" class="switch"><span class="name">Signals</span><span class="desc">Average and MACD crossovers</span></label>
+                            <span class="params"></span>
+                        </div>
+                        <div class="option-row">
+                            <input type="checkbox" id="crosshair"><label for="crosshair" class="switch"><span class="name">Crosshair</span><span class="desc">Date and value on the axes</span></label>
+                            <span class="params"></span>
+                        </div>
                     </div>
                 </details>
 
