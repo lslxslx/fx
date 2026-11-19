@@ -279,6 +279,7 @@ class HistoricalPriceChart {
     this.trendLines = [];
     this.levels = []; // Horizontal support / resistance levels, scoped to currency.
     this.panelHeights = {}; // Panel heights (chart units) set by dragging the line under a panel.
+    this.dateRange = { fd: '', td: '' }; // custom dates, used after "Apply dates"
     this.nextTrendId = 0;
     this.trendDraft = null;
     this.selectedTrendId = null;
@@ -330,20 +331,24 @@ class HistoricalPriceChart {
 
   bindControls() {
     const panel = document.getElementById('cpanel');
-    const select = document.getElementById('ix');
     this.listen(panel, 'change', event => {
-      const target=event.target;
-      if (target.id==='start' && select) {
-        select.disabled=Boolean(target.value); select.style.textDecoration=target.value?'line-through':'unset';
-      }
-      if (target.matches('input[name=currency], input[name=interval], input[type=date], #ix')) {
-        if (target.name==='interval') this.switchintervalix(target.value,select);
+      const target = event.target;
+      // Dates wait for "Apply dates": nothing reloads while they are being chosen.
+      if (target.type === 'date') return;
+      if (target.matches('input[name=currency], input[name=interval], input[name=ix]')) {
+        if (target.name === 'interval') this.switchintervalix(target.value);
+        // A range button replaces a custom date range.
+        if (target.name === 'ix') this.clearDateRange(false);
         this.closemenu(); this.reloadData();
       } else if (target.closest('#overlays, #indicators, #tools')) this.refreshIndicators();
     });
-    // Moving averages: add a row (focus its period), remove a row.
+    // Buttons: dates, moving averages (add a row and focus its period, remove a row).
     this.listen(panel, 'click', event => {
-      if (event.target.id === 'ma-add') {
+      if (event.target.id === 'range-apply') {
+        this.applyDateRange();
+      } else if (event.target.id === 'range-clear') {
+        this.clearDateRange(true);
+      } else if (event.target.id === 'ma-add') {
         this.addMovingAverage()?.querySelector('.ma-period').focus();
       } else if (event.target.classList.contains('ma-remove')) {
         event.target.closest('.ma-row').remove();
@@ -352,8 +357,10 @@ class HistoricalPriceChart {
       }
     });
     this.listen(panel, 'keydown', event => {
-      if(event.key!=='Enter' || event.target.id==='q') return;
-      event.preventDefault(); this.closemenu();
+      if (event.key !== 'Enter' || event.target.id === 'q') return;
+      event.preventDefault();
+      if (event.target.type === 'date') { this.applyDateRange(); return; }
+      this.closemenu();
       if (event.target.closest('#overlays, #indicators, #tools')) this.refreshIndicators();
       else this.reloadData();
     });
@@ -388,23 +395,54 @@ class HistoricalPriceChart {
   // On small screens the menu covers the chart: close it after a choice.
   closemenu() {
     const menu = document.getElementById('menu');
-    if (menu && window.matchMedia('(max-width: 889px)').matches) menu.checked = false;
+    if (menu && window.matchMedia('(max-width: 899px)').matches) menu.checked = false;
   }
 
   // Default range when the interval changes: 1 year daily, 5 years weekly,
   // 20 years monthly, everything quarterly.
-  switchintervalix(v, vix) {
+  switchintervalix(v) {
     const months = { quave: 0, mave: 240, wave: 60, daily: 12 };
-    if (v in months) vix.value = months[v];
-    return vix.value;
+    if (v in months) this.setRange(String(months[v]));
+    return this.rangeValue();
+  }
+
+  // Range buttons (1M ... Max): the checked one, or check one by its number of months.
+  rangeValue() {
+    return document.querySelector('input[name=ix]:checked')?.value || '12';
+  }
+
+  setRange(months) {
+    const input = document.querySelector(`input[name=ix][value="${months}"]`);
+    if (input) input.checked = true;
+  }
+
+  // Custom dates are used only after "Apply dates" (or Enter in a date field).
+  applyDateRange() {
+    const from = document.getElementById('start')?.value || '', to = document.getElementById('end')?.value || '';
+    const status = document.getElementById('data-status');
+    if (from && to && from > to) {
+      if (status) status.textContent = 'The From date must be before the To date.';
+      return;
+    }
+    this.dateRange = { fd: from, td: to };
+    document.getElementById('range')?.classList.toggle('inactive', Boolean(from || to));
+    this.closemenu();
+    this.reloadData();
+  }
+
+  clearDateRange(reload) {
+    for (const id of ['start', 'end']) { const input = document.getElementById(id); if (input) input.value = ''; }
+    this.dateRange = { fd: '', td: '' };
+    document.getElementById('range')?.classList.remove('inactive');
+    if (reload) { this.closemenu(); this.reloadData(); }
   }
 
   parameters() {
     return {
       c: document.querySelector('input[name=currency]:checked')?.value || 'EUR',
-      fd: document.getElementById('start')?.value || '', td: document.getElementById('end')?.value || '',
+      fd: this.dateRange?.fd || '', td: this.dateRange?.td || '',
       i: document.querySelector('input[name=interval]:checked')?.value || 'daily',
-      ix: document.getElementById('ix')?.value || '12'
+      ix: this.rangeValue()
     };
   }
 
@@ -472,7 +510,10 @@ class HistoricalPriceChart {
     const remove = document.createElement('button');
     remove.type = 'button'; remove.className = 'ma-remove'; remove.textContent = '×';
     remove.title = 'Remove'; remove.setAttribute('aria-label', 'Remove moving average');
-    row.append(swatch, select, input, remove);
+    const typeWrap = document.createElement('span');
+    typeWrap.className = 'ma-type-wrap';
+    typeWrap.append(select, swatch);
+    row.append(typeWrap, input, remove);
     list.appendChild(row);
     this.updateMovingAverageButton();
     return row;
@@ -500,8 +541,7 @@ class HistoricalPriceChart {
     if (currency) currency.checked = true;
     const interval = Array.from(document.querySelectorAll('input[name=interval]')).find(input => input.value === saved.interval);
     if (interval) interval.checked = true;
-    const select = node('ix');
-    if (select && Array.from(select.options).some(option => option.value === saved.ix)) select.value = saved.ix;
+    if (typeof saved.ix === 'string') this.setRange(saved.ix);
     if (Array.isArray(saved.order)) this.oscillatorOrder = saved.order.filter(key => ['roc', 'rsi', 'stoch'].includes(key));
     const point = value => value && Number.isFinite(value.date) && Number.isFinite(value.price);
     if (Array.isArray(saved.trendLines)) {
@@ -537,7 +577,7 @@ class HistoricalPriceChart {
       const state = {
         currency: document.querySelector('input[name=currency]:checked')?.value,
         interval: document.querySelector('input[name=interval]:checked')?.value,
-        ix: node('ix')?.value, order: this.oscillatorOrder,
+        ix: this.rangeValue(), order: this.oscillatorOrder,
         text: Object.fromEntries(HistoricalPriceChart.textControls.filter(node).map(id => [id, node(id).value])),
         checked: Object.fromEntries(HistoricalPriceChart.checkControls.filter(node).map(id => [id, node(id).checked])),
         trendLines: this.trendLines.map(({ currency, interval, kind, start, end }) => ({ currency, interval, ...(kind ? { kind } : {}), start, end })),
