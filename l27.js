@@ -21,7 +21,7 @@ window.ForexData = (() => {
   function statusNode() { return document.getElementById('data-status') || {}; }
   const iso = date => date.toISOString().slice(0,10);
   async function load(code) {
-    if (!codes.includes(code)) throw new Error('Valutë e panjohur');
+    if (!codes.includes(code)) throw new Error('Unknown currency');
     if (!cache.has(code)) cache.set(code, fetch(`./data/${code.toLowerCase()}.json`).then(r => {
       if (!r.ok) throw new Error(`Nuk u lexua ${code}: ${r.status}`);
       return r.json();
@@ -66,14 +66,14 @@ window.ForexData = (() => {
   }
   async function convert(input) {
     const m=input.trim().match(/^(\d+(?:[.,]\d+)?)\s+([A-Za-z]{3})\s+([A-Za-z]{3})$/);
-    if(!m) return {R:'E',Error:'Formati: 100.5 EUR ALL'};
+    if(!m) return {R:'E',Error:'Enter an amount, for example 100.5'};
     const from=m[2].toUpperCase(),to=m[3].toUpperCase();
-    if(![...codes,'ALL'].includes(from)||![...codes,'ALL'].includes(to)) return {R:'E',Error:'Valutë e pambështetur.'};
+    if(![...codes,'ALL'].includes(from)||![...codes,'ALL'].includes(to)) return {R:'E',Error:'This currency is not supported.'};
     const a=from==='ALL'?null:(await load(from))[0];
     const b=to==='ALL'?null:(await load(to))[0];
-    if(a&&b&&a.Data!==b.Data) return {R:'E',Error:'Kurset më të fundit kanë data të ndryshme.'};
+    if(a&&b&&a.Data!==b.Data) return {R:'E',Error:'The latest rates of these two currencies have different dates.'};
     const rate=(r,c)=>r?r[c]/(c==='JPY'?100:1):1;
-    return {R:'X',Amount:Number(m[1].replace(',','.')),Sell:from,Buy:to,Exchange:rate(a,from)/rate(b,to),Source:`Bank of Albania — JSON ${a?.Data||b?.Data||''}`};
+    return {R:'X',Amount:Number(m[1].replace(',','.')),Sell:from,Buy:to,Exchange:rate(a,from)/rate(b,to),Date:a?.Data||b?.Data||'',Source:'Bank of Albania'};
   }
   // Today's rates for the currency list. ./data/latest.json (written by the update
   // script) holds the latest and previous rate of every currency, so the page does
@@ -296,6 +296,7 @@ class HistoricalPriceChart {
     this.updateMovingAverageButton();
     this.bindControls();
     this.bindMenuDrawer();
+    this.bindConverter();
     this.observeLayout();
     this.ready = this.reloadData();
     // Optional metadata must never block the price chart.
@@ -367,7 +368,7 @@ class HistoricalPriceChart {
       }
     });
     this.listen(panel, 'keydown', event => {
-      if (event.key !== 'Enter' || event.target.id === 'q') return;
+      if (event.key !== 'Enter' || event.target.closest('#converter')) return;
       event.preventDefault();
       if (event.target.type === 'date') { this.applyDateRange(); return; }
       this.closemenu();
@@ -763,7 +764,7 @@ class HistoricalPriceChart {
     } catch (error) {
       if (!this.destroyed && requestId === this.state.requestId) {
         console.error(error);
-        this.showError('Nuk u ngarkuan të dhënat: '+error.message);
+        this.showError('The data could not be loaded: '+error.message);
         const status = document.getElementById('data-status');
         if (status) status.textContent = 'The data could not be loaded: ' + error.message;
       }
@@ -904,7 +905,7 @@ class HistoricalPriceChart {
     if (!this.currentData.length) {
       this.zoomBehavior = null;
       this.svg.on('.zoom', null).on('dblclick.reset', null);
-      this.showError('Nuk ka të dhëna për intervalin e zgjedhur.'); return;
+      this.showError('There is no data for the chosen period.'); return;
     }
     this.drawChart(this.currentData, this.state.currency);
   }
@@ -2123,7 +2124,7 @@ class HistoricalPriceChart {
         .data(lines, trend => trend.id)
         .join('path').attr('class', 'trend').attr('fill', 'none')
         .attr('tabindex', 0).attr('role', 'button')
-        .attr('aria-label', 'Përzgjidh vijën e trendit për të lëvizur skajet ose për ta fshirë me Delete')
+        .attr('aria-label', 'Select the trend line to move its ends or delete it with Delete')
         .attr('stroke-linecap', 'round').attr('vector-effect', 'non-scaling-stroke')
         .attr('d', trend => line(this.projectTrend(trend, x, y)));
       svg.select('.trendlines').selectAll('path').style('cursor', 'pointer')
@@ -2170,7 +2171,7 @@ class HistoricalPriceChart {
           group.append('circle').attr('class', 'handle-dot').attr('r', 6).attr('stroke-width', 2);
           return group;
         }).attr('tabindex', 0).attr('role', 'button').style('cursor', 'move').style('touch-action', 'none')
-        .attr('aria-label', handle => `${handle.key === 'start' ? 'Fillimi' : 'Fundi'} i vijës: ${new Date(handle.trend[handle.key].date).toISOString().slice(0, 10)}, ${handle.trend[handle.key].price.toFixed(2)}. Lëvize me shigjetat.`)
+        .attr('aria-label', handle => `Line ${handle.key === 'start' ? 'start' : 'end'}: ${new Date(handle.trend[handle.key].date).toISOString().slice(0, 10)}, ${handle.trend[handle.key].price.toFixed(2)}. Move it with the arrow keys.`)
         .attr('transform', handle => `translate(${x(handle.trend[handle.key].date)},${y(handle.trend[handle.key].price)})`)
         .attr('display', handle => {
           const point = handle.trend[handle.key], px = x(point.date), py = y(point.price);
@@ -2199,7 +2200,7 @@ class HistoricalPriceChart {
         if (Number.isFinite(price)) { level.price = Math.round(price * 100) / 100; redraw(); }
       };
       levels.select('.level-hit')
-        .attr('aria-label', level => 'Niveli ' + formatFxNumber(level.price) + '. Lëvize me shigjetat lart / poshtë, fshije me Delete.')
+        .attr('aria-label', level => 'Level ' + formatFxNumber(level.price) + '. Move it with the up and down arrows, delete it with Delete.')
         .on('pointerdown.levels', function (event, level) {
           event.stopPropagation();
           if (event.button !== 0 || chart.state.loading || chart.drawingTrend || chart.trendEdit) return;
@@ -2276,20 +2277,20 @@ class HistoricalPriceChart {
   // ===== Information events (data/events.json) =================================
 
   normalizeInfoEvents(events) {
-    if (!Array.isArray(events)) throw new TypeError('Ngjarjet duhet të jenë një listë.');
+    if (!Array.isArray(events)) throw new TypeError('The events must be a list.');
     return events.map((event, index) => {
       const date = event?.date;
       const timestamp = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
         ? Date.parse(date + 'T00:00:00Z') : NaN;
       if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== date)
-        throw new TypeError(`Data e ngjarjes ${index + 1} duhet të jetë YYYY-MM-DD e vlefshme.`);
+        throw new TypeError(`The date of event ${index + 1} must be a valid YYYY-MM-DD.`);
       const currency = String(event.currency || '*').toUpperCase();
       if (!['*','EUR','USD','GBP','CHF','XAU','XAG','JPY','AUD','CAD'].includes(currency))
-        throw new TypeError(`Monedhë e pavlefshme te ngjarja ${index + 1}.`);
+        throw new TypeError(`Invalid currency in event ${index + 1}.`);
       if (typeof event.title !== 'string' || !event.title.trim())
         throw new TypeError(`Mungon titulli i ngjarjes ${index + 1}.`);
       if (event.description != null && typeof event.description !== 'string')
-        throw new TypeError(`Përshkrimi i ngjarjes ${index + 1} duhet të jetë tekst.`);
+        throw new TypeError(`The description of event ${index + 1} must be text.`);
       return { date, currency, title: event.title.trim(), description: event.description || '' };
     });
   }
@@ -2324,8 +2325,8 @@ class HistoricalPriceChart {
       if (this.destroyed || requestId !== this.infoRequestId) return false;
       this.infoEvents = [];
       this.state.infoEventsError = error.name === 'AbortError'
-        ? 'Ngarkimi i events.json tejkaloi kohën e pritjes.' : error.message;
-      console.warn('Shënuesit I nuk u ngarkuan; grafiku vazhdon pa ngjarje.', this.state.infoEventsError);
+        ? 'Loading events.json took too long.' : error.message;
+      console.warn('The I markers were not loaded; the chart continues without events.', this.state.infoEventsError);
     } finally {
       clearTimeout(timeout);
       if (requestId === this.infoRequestId) this.infoAbort = null;
@@ -2417,15 +2418,43 @@ class HistoricalPriceChart {
 
   // ===== Currency converter ====================================================
 
+  // The result follows the amount and both currencies as they change.
   async convertOrQuote() {
-    const input=document.getElementById('q'), output=document.getElementById('cqr');
-    if(!input||!output)return;
+    const amount = document.getElementById('q-amount'), from = document.getElementById('q-from'), to = document.getElementById('q-to');
+    const output = document.getElementById('q-result'), note = document.getElementById('cqr');
+    if (!amount || !from || !to || !output || !note) return;
+    const request = this.convertRequest = (this.convertRequest || 0) + 1;
+    const value = amount.value.trim().replace(/\s/g, '');
+    const show = (result, text, error) => {
+      output.textContent = result || '\u00a0';
+      note.textContent = text;
+      note.classList.toggle('error', Boolean(error));
+    };
+    if (!value) { show('', 'Enter an amount', true); return; }
     try {
-      const result=await window.ForexData.convert(input.value);
-      output.textContent=result.R==='X'
-        ? `${formatFxNumber(result.Amount)} ${result.Sell} = ${formatFxNumber(result.Amount*result.Exchange)} ${result.Buy}\n(${result.Source})`
-        : result.Error || '';
-    } catch(error) { output.textContent='Gabim: '+error.message; }
+      const result = await window.ForexData.convert(`${value} ${from.value} ${to.value}`);
+      if (request !== this.convertRequest) return;
+      if (result.R !== 'X') { show('', result.Error || 'The amount could not be converted', true); return; }
+      const day = result.Date ? d3.utcFormat('%d %b %Y')(new Date(result.Date + 'T00:00:00Z')) : '';
+      // A rate below 1 keeps four significant digits (1 ALL = 0.01103 EUR, not 0.01).
+      const unit = result.Exchange >= 1 ? formatFxNumber(result.Exchange) : String(Number(result.Exchange.toPrecision(4)));
+      show(formatFxNumber(result.Amount * result.Exchange),
+        `1 ${result.Sell} = ${unit} ${result.Buy}\n${result.Source}${day ? ', ' + day : ''}`);
+    } catch (error) {
+      if (request === this.convertRequest) show('', 'The rates could not be loaded: ' + error.message, true);
+    }
+  }
+
+  bindConverter() {
+    const amount = document.getElementById('q-amount'), from = document.getElementById('q-from'), to = document.getElementById('q-to');
+    if (!amount || !from || !to) return;
+    const update = () => this.convertOrQuote();
+    this.listen(amount, 'input', update);
+    this.listen(from, 'change', update);
+    this.listen(to, 'change', update);
+    this.listen(document.getElementById('q-swap'), 'click', () => { [from.value, to.value] = [to.value, from.value]; update(); });
+    // The first result appears when the section is opened.
+    this.listen(document.getElementById('converter'), 'toggle', event => { if (event.target.open) update(); });
   }
 
   // ===== Formatting ============================================================

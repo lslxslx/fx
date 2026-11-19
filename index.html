@@ -59,10 +59,18 @@
 
                 <details class="section" id="converter">
                     <summary>Converter</summary>
-                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL" aria-label="Amount, sell currency, buy currency"
-                        onkeydown="if (event.key == 'Enter') { cqu();}" />
-                    <span id="cqr"></span>
-                    <p class="hint">Bank of Albania rates. Type an amount and two currencies, e.g. <code>100.5 EUR ALL</code>, then press Enter.</p>
+                    <div class="option-list converter-box">
+                        <div class="conv-row">
+                            <input type="text" id="q-amount" inputmode="decimal" value="100" autocomplete="off" aria-label="Amount">
+                            <select id="q-from" aria-label="From currency"><option value="ALL">ALL</option><option value="EUR" selected>EUR</option><option value="USD">USD</option><option value="GBP">GBP</option><option value="CHF">CHF</option><option value="JPY">JPY</option><option value="AUD">AUD</option><option value="CAD">CAD</option><option value="XAU">XAU</option><option value="XAG">XAG</option></select>
+                        </div>
+                        <button type="button" id="q-swap" title="Swap currencies" aria-label="Swap currencies"><span aria-hidden="true">&#8645;</span></button>
+                        <div class="conv-row">
+                            <output id="q-result" for="q-amount q-from q-to" aria-live="polite">&nbsp;</output>
+                            <select id="q-to" aria-label="To currency"><option value="ALL" selected>ALL</option><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option><option value="CHF">CHF</option><option value="JPY">JPY</option><option value="AUD">AUD</option><option value="CAD">CAD</option><option value="XAU">XAU</option><option value="XAG">XAG</option></select>
+                        </div>
+                        <p class="conv-note" id="cqr">Bank of Albania rates</p>
+                    </div>
                 </details>
 
                 <details class="section" id="sec-period" open>

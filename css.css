@@ -1190,18 +1190,93 @@ select {
 
 /* ===== Tools, converter, help ===================================================== */
 
-#cqr {
-	display: block;
+/* converter: amount and currency on top, result and currency below, a swap
+   button on the line between them, the rate and its date at the bottom */
+.converter-box {
+	position: relative;
+}
+
+.conv-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 8.4rem;
+	align-items: center;
+	gap: .8rem;
+	min-height: 5.2rem;
+	padding: 0 .9rem 0 1.2rem;
+}
+
+.conv-row + #q-swap + .conv-row {
+	border-top: 1px solid var(--rule);
+}
+
+.conv-row select {
+	height: 3.4rem;
+	font-weight: 600;
+}
+
+#q-amount {
+	height: 3.6rem;
+	padding: 0;
+	border: 0;
+	background: none;
+	text-align: left;
+	font-size: 1.8rem;
+	font-weight: 500;
+}
+
+#q-amount:focus-visible {
+	outline: none;
+	box-shadow: 0 2px 0 var(--accent);
+	border-radius: 0;
+}
+
+#q-result {
+	font-size: 1.8rem;
+	font-weight: 600;
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#q-swap {
+	position: absolute;
+	right: 10.4rem;
+	top: 5.2rem;
+	z-index: 1;
+	transform: translate(50%, -50%);
+	width: 3rem;
+	height: 3rem;
+	border-radius: 50%;
+	border: 1px solid var(--rule);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 1.5rem;
+	line-height: 1;
+	cursor: pointer;
+}
+
+#q-swap:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.conv-note {
 	white-space: pre-line;
-	margin: .8rem 0 0;
+	line-height: 1.5;
+	margin: 0;
+	padding: .9rem 1.2rem;
+	border-top: 1px solid var(--rule);
+	font-size: 1.15rem;
+	color: var(--muted);
 	font-variant-numeric: tabular-nums;
 }
 
-#cqr:empty {
-	display: none;
+.conv-note.error {
+	color: var(--down);
 }
 
-.hint,
 #help p {
 	margin: .8rem 0 0;
 	font-size: 1.2rem;
