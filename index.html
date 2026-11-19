@@ -77,12 +77,14 @@
                         <span class="ruler-mark" aria-hidden="true">1Y</span>
                     </div>
                     <div class="option-list date-range">
-                        <label class="field-row"><span>From</span><input type="date" min="1991-01-01" id="start"></label>
-                        <label class="field-row"><span>To</span><input type="date" min="1991-01-01" id="end"></label>
-                        <div class="option-actions">
-                            <button type="button" id="range-clear">Clear</button>
-                            <button type="button" id="range-apply" class="primary">Apply dates</button>
+                        <div class="option-row">
+                            <input type="checkbox" id="custom"><label for="custom" class="switch"><span class="name">Custom dates</span><span class="desc">Your own start and end</span></label>
                         </div>
+                        <div class="date-fields"><div>
+                            <label class="field-row"><span>From</span><input type="date" min="1991-01-01" id="start"></label>
+                            <label class="field-row"><span>To</span><input type="date" min="1991-01-01" id="end"></label>
+                            <button type="button" id="range-apply" class="option-apply">Apply dates</button>
+                        </div></div>
                     </div>
                 </details>
 

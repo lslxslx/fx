@@ -598,19 +598,44 @@ input:checked + .toggle {
 	color: var(--muted);
 }
 
-/* narrow screens: the changes move under the code and the rate */
-@media (max-width: 359px) {
-	.rate-list {
-		grid-template-columns: auto 1fr;
-	}
+/* narrow sidebars and phones: the same single line, a little tighter.
+   Measured on the section (a size container), not on the window, so the desktop
+   sidebar and phones get the spacing that fits them. */
+#sec-currency {
+	container: currency / inline-size;
+}
 
+@container currency (max-width: 345px) {
 	.rate-list label {
-		row-gap: .2rem;
-		padding: .8rem 1.2rem;
+		column-gap: 7px;
+		padding: 9px 9px;
 	}
 
-	.rate-list .change {
-		justify-self: start;
+	.rate-list b,
+	.rate-list .rate {
+		font-size: 12.5px;
+	}
+
+	.rate-list .change,
+	.rate-list .delta {
+		font-size: 11px;
+	}
+}
+
+@container currency (max-width: 289px) {
+	.rate-list label {
+		column-gap: 5px;
+		padding: 9px 7px;
+	}
+
+	.rate-list b,
+	.rate-list .rate {
+		font-size: 11.5px;
+	}
+
+	.rate-list .change,
+	.rate-list .delta {
+		font-size: 10.2px;
 	}
 }
 
@@ -771,7 +796,7 @@ input:checked + .toggle {
 	cursor: pointer;
 }
 
-.field-row + .field-row {
+.date-fields .field-row {
 	border-top: 1px solid var(--rule);
 }
 
@@ -781,33 +806,52 @@ input:checked + .toggle {
 	padding: 0 .6rem;
 }
 
-.option-actions {
+/* the From / To rows open under the switch; closed, they take no room and
+   cannot be reached with the keyboard */
+.date-fields {
 	display: grid;
-	grid-template-columns: 1fr 1fr;
-	border-top: 1px solid var(--rule);
+	grid-template-rows: 0fr;
+	transition: grid-template-rows .2s ease;
 }
 
-.option-actions button {
+.date-fields > div {
+	overflow: hidden;
+	visibility: hidden;
+	transition: visibility 0s .2s;
+}
+
+.date-range:has(#custom:checked) .date-fields {
+	grid-template-rows: 1fr;
+}
+
+.date-range:has(#custom:checked) .date-fields > div {
+	visibility: visible;
+	transition-delay: 0s;
+}
+
+.option-apply {
+	display: block;
+	width: 100%;
 	min-height: 4.4rem;
 	font: inherit;
 	font-size: 1.3rem;
-	color: var(--muted);
+	font-weight: 600;
+	color: var(--accent);
 	background: none;
 	border: 0;
+	border-top: 1px solid var(--rule);
 	cursor: pointer;
 }
 
-.option-actions button + button {
-	border-left: 1px solid var(--rule);
-}
-
-.option-actions button:hover {
+.option-apply:hover {
 	background: var(--accent-soft);
 }
 
-.option-actions .primary {
-	color: var(--accent);
-	font-weight: 600;
+@media (prefers-reduced-motion: reduce) {
+	.date-fields,
+	.date-fields > div {
+		transition: none;
+	}
 }
 
 /* ===== Overlays, indicators, tools: option lists ===================================

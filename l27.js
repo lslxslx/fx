@@ -338,6 +338,11 @@ class HistoricalPriceChart {
       const target = event.target;
       // Dates wait for "Apply dates": nothing reloads while they are being chosen.
       if (target.type === 'date') return;
+      // "Custom dates" only opens the fields; turning it off drops applied dates.
+      if (target.id === 'custom') {
+        if (!target.checked) this.clearDateRange(Boolean(this.dateRange.fd || this.dateRange.td));
+        return;
+      }
       if (target.matches('input[name=currency], input[name=interval], input[name=ix]')) {
         if (target.name === 'interval') this.switchintervalix(target.value);
         // A range button replaces a custom date range.
@@ -349,8 +354,6 @@ class HistoricalPriceChart {
     this.listen(panel, 'click', event => {
       if (event.target.id === 'range-apply') {
         this.applyDateRange();
-      } else if (event.target.id === 'range-clear') {
-        this.clearDateRange(true);
       } else if (event.target.id === 'ma-add') {
         this.addMovingAverage()?.querySelector('.ma-period').focus();
       } else if (event.target.classList.contains('ma-remove')) {
@@ -488,6 +491,8 @@ class HistoricalPriceChart {
 
   clearDateRange(reload) {
     for (const id of ['start', 'end']) { const input = document.getElementById(id); if (input) input.value = ''; }
+    const custom = document.getElementById('custom');
+    if (custom) custom.checked = false;
     this.dateRange = { fd: '', td: '' };
     document.getElementById('range')?.classList.remove('inactive');
     if (reload) { this.closemenu(); this.reloadData(); }
