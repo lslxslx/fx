@@ -2475,6 +2475,13 @@ HistoricalPriceChart.textControls = ['bb_N','bb_K','macd_fast','macd_slow','macd
 HistoricalPriceChart.checkControls = ['bband','macd','macdh','roc','rsi','stoch','signals','crosshair','fib'];
 
 // ===== Start-up ================================================================
+// iPhone and iPad zoom the page into any field with text under 16px when it is
+// tapped. A maximum scale of 1 stops that zoom; Safari still lets the user pinch
+// to zoom. Other phones do not zoom into fields and keep the tag as it is.
+if (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+  const viewport = document.querySelector('meta[name=viewport]');
+  if (viewport && !/maximum-scale/.test(viewport.content)) viewport.content += ', maximum-scale=1';
+}
 window.HistoricalPriceChart = HistoricalPriceChart;
 const startChart = () => {
   window.historicalPriceChart?.destroy();
