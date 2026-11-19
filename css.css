@@ -678,6 +678,11 @@ input:checked + .toggle {
 	color: var(--muted);
 }
 
+/* the rate stands apart from its changes */
+.rate-list .change {
+	padding-left: 1rem;
+}
+
 /* narrow sidebars and phones: the same single line, a little tighter.
    Measured on the section (a size container), not on the window, so the desktop
    sidebar and phones get the spacing that fits them. */
@@ -687,8 +692,12 @@ input:checked + .toggle {
 
 @container currency (max-width: 345px) {
 	.rate-list label {
-		column-gap: 9px;
+		column-gap: 8px;
 		padding: 10px 10px;
+	}
+
+	.rate-list .change {
+		padding-left: 10px;
 	}
 
 	.rate-list b {
@@ -707,8 +716,12 @@ input:checked + .toggle {
 
 @container currency (max-width: 289px) {
 	.rate-list label {
-		column-gap: 6px;
+		column-gap: 5px;
 		padding: 9px 8px;
+	}
+
+	.rate-list .change {
+		padding-left: 6px;
 	}
 
 	.rate-list b {
@@ -727,8 +740,12 @@ input:checked + .toggle {
 
 @container currency (max-width: 259px) {
 	.rate-list label {
-		column-gap: 4px;
-		padding: 8px 6px;
+		column-gap: 3px;
+		padding: 8px 5px;
+	}
+
+	.rate-list .change {
+		padding-left: 2px;
 	}
 
 	.rate-list b,

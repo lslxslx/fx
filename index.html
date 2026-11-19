@@ -57,6 +57,14 @@
                     </div>
                 </details>
 
+                <details class="section" id="converter">
+                    <summary>Converter</summary>
+                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL" aria-label="Amount, sell currency, buy currency"
+                        onkeydown="if (event.key == 'Enter') { cqu();}" />
+                    <span id="cqr"></span>
+                    <p class="hint">Bank of Albania rates. Type an amount and two currencies, e.g. <code>100.5 EUR ALL</code>, then press Enter.</p>
+                </details>
+
                 <details class="section" id="sec-period" open>
                     <summary>Period</summary>
                     <div class="cell-grid cols-4 segmented" role="radiogroup" aria-label="Interval">
@@ -146,14 +154,6 @@
                             <span class="params"></span>
                         </div>
                     </div>
-                </details>
-
-                <details class="section" id="converter">
-                    <summary>Converter</summary>
-                    <input type="search" id="q" maxlength="33" placeholder="100.5 EUR ALL" aria-label="Amount, sell currency, buy currency"
-                        onkeydown="if (event.key == 'Enter') { cqu();}" />
-                    <span id="cqr"></span>
-                    <p class="hint">Bank of Albania rates. Type an amount and two currencies, e.g. <code>100.5 EUR ALL</code>, then press Enter.</p>
                 </details>
 
                 <details class="section" id="help">
