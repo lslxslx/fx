@@ -333,6 +333,7 @@ class HistoricalPriceChart {
 
   bindControls() {
     const panel = document.getElementById('cpanel');
+    this.bindRuler();
     this.listen(panel, 'change', event => {
       const target = event.target;
       // Dates wait for "Apply dates": nothing reloads while they are being chosen.
@@ -340,7 +341,7 @@ class HistoricalPriceChart {
       if (target.matches('input[name=currency], input[name=interval], input[name=ix]')) {
         if (target.name === 'interval') this.switchintervalix(target.value);
         // A range button replaces a custom date range.
-        if (target.name === 'ix') this.clearDateRange(false);
+        if (target.name === 'ix') { this.clearDateRange(false); this.updateRuler(); }
         this.closemenu(); this.reloadData();
       } else if (target.closest('#overlays, #indicators, #tools')) this.refreshIndicators();
     });
@@ -413,9 +414,62 @@ class HistoricalPriceChart {
     return document.querySelector('input[name=ix]:checked')?.value || '12';
   }
 
+  // A value that is no longer on the ruler (an older saved 3Y, say) goes to the
+  // nearest step on the logarithmic scale; Max stays Max.
   setRange(months) {
-    const input = document.querySelector(`input[name=ix][value="${months}"]`);
+    const inputs = Array.from(document.querySelectorAll('input[name=ix]'));
+    let input = inputs.find(item => item.value === String(months));
+    const wanted = Number(months);
+    if (!input && wanted > 0) {
+      const distance = item => Number(item.value) > 0 ? Math.abs(Math.log(Number(item.value) / wanted)) : Infinity;
+      input = inputs.reduce((best, item) => distance(item) < distance(best) ? item : best, inputs[0]);
+    }
     if (input) input.checked = true;
+    this.updateRuler();
+  }
+
+  // The tag on the ruler follows the checked step.
+  updateRuler() {
+    const ruler = document.getElementById('range'), mark = ruler?.querySelector('.ruler-mark');
+    const input = ruler?.querySelector('input[name=ix]:checked'), label = input && ruler.querySelector(`label[for="${input.id}"]`);
+    if (!mark || !label) return;
+    mark.style.setProperty('--p', label.style.getPropertyValue('--p'));
+    mark.textContent = label.textContent;
+  }
+
+  // Pointer on the ruler: the nearest step follows the finger or the mouse, and the
+  // chart reloads once, when it is released on a different step.
+  bindRuler() {
+    const ruler = document.getElementById('range');
+    if (!ruler) return;
+    const inputs = Array.from(ruler.querySelectorAll('input[name=ix]'));
+    const nearest = event => {
+      const box = ruler.getBoundingClientRect();
+      return inputs.reduce((best, input) => {
+        const left = ruler.querySelector(`label[for="${input.id}"]`).getBoundingClientRect();
+        const x = left.left + left.width / 2, bestBox = ruler.querySelector(`label[for="${best.id}"]`).getBoundingClientRect();
+        return Math.abs(x - event.clientX) < Math.abs(bestBox.left + bestBox.width / 2 - event.clientX) ? input : best;
+      }, inputs[0]);
+    };
+    let start = null;
+    const preview = event => { const input = nearest(event); input.checked = true; this.updateRuler(); };
+    this.listen(ruler, 'pointerdown', event => {
+      if (event.button > 0) return;
+      event.preventDefault();
+      start = ruler.querySelector('input[name=ix]:checked');
+      ruler.setPointerCapture(event.pointerId);
+      preview(event);
+    });
+    this.listen(ruler, 'pointermove', event => { if (start) preview(event); });
+    const finish = () => {
+      if (!start) return;
+      const chosen = ruler.querySelector('input[name=ix]:checked'), changed = chosen !== start;
+      start = null;
+      if (changed) chosen.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    this.listen(ruler, 'pointerup', finish);
+    this.listen(ruler, 'pointercancel', finish);
+    this.updateRuler();
   }
 
   // Custom dates are used only after "Apply dates" (or Enter in a date field).

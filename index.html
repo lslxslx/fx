@@ -42,12 +42,12 @@
             <div id="cpanel">
                 <details class="section" id="sec-currency" open>
                     <summary>Currency <span class="summary-note" id="updated"></span></summary>
-                    <div id="currency" class="tiles cols-3 rate-board">
+                    <div id="currency" class="rate-list">
                         <input type="radio" name="currency" id="EUR" value="EUR" checked><label for="EUR"><b>EUR</b><span class="rate" data-rate="EUR">…</span><span class="change" data-percent="EUR"></span><span class="delta" data-delta="EUR"></span></label>
                         <input type="radio" name="currency" id="USD" value="USD"><label for="USD"><b>USD</b><span class="rate" data-rate="USD">…</span><span class="change" data-percent="USD"></span><span class="delta" data-delta="USD"></span></label>
                         <input type="radio" name="currency" id="GBP" value="GBP"><label for="GBP"><b>GBP</b><span class="rate" data-rate="GBP">…</span><span class="change" data-percent="GBP"></span><span class="delta" data-delta="GBP"></span></label>
                         <input type="radio" name="currency" id="CHF" value="CHF"><label for="CHF"><b>CHF</b><span class="rate" data-rate="CHF">…</span><span class="change" data-percent="CHF"></span><span class="delta" data-delta="CHF"></span></label>
-                        <input type="radio" name="currency" id="JPY" value="JPY"><label for="JPY" title="Rate for 100 JPY"><b>JPY <small>×100</small></b><span class="rate" data-rate="JPY">…</span><span class="change" data-percent="JPY"></span><span class="delta" data-delta="JPY"></span></label>
+                        <input type="radio" name="currency" id="JPY" value="JPY"><label for="JPY" title="Rate for 100 JPY"><b>JPY <small>(100)</small></b><span class="rate" data-rate="JPY">…</span><span class="change" data-percent="JPY"></span><span class="delta" data-delta="JPY"></span></label>
                         <input type="radio" name="currency" id="AUD" value="AUD"><label for="AUD"><b>AUD</b><span class="rate" data-rate="AUD">…</span><span class="change" data-percent="AUD"></span><span class="delta" data-delta="AUD"></span></label>
                         <input type="radio" name="currency" id="CAD" value="CAD"><label for="CAD"><b>CAD</b><span class="rate" data-rate="CAD">…</span><span class="change" data-percent="CAD"></span><span class="delta" data-delta="CAD"></span></label>
                         <input type="radio" name="currency" id="XAU" value="XAU"><label for="XAU" title="Gold, one troy ounce"><b>XAU</b><span class="rate" data-rate="XAU">…</span><span class="change" data-percent="XAU"></span><span class="delta" data-delta="XAU"></span></label>
@@ -57,23 +57,24 @@
 
                 <details class="section" id="sec-period" open>
                     <summary>Period</summary>
-                    <div class="tiles cols-4 segmented" role="radiogroup" aria-label="Interval">
+                    <div class="cell-grid cols-4 segmented" role="radiogroup" aria-label="Interval">
                         <input type="radio" name="interval" id="daily" value="daily" checked><label for="daily" title="Daily">Day</label>
                         <input type="radio" name="interval" id="weekly" value="wave"><label for="weekly" title="Weekly (average of the week)">Week</label>
                         <input type="radio" name="interval" id="monthly" value="mave"><label for="monthly" title="Monthly (average of the month)">Month</label>
                         <input type="radio" name="interval" id="quarterly" value="quave"><label for="quarterly" title="Quarterly (average of the quarter)">Quarter</label>
                     </div>
-                    <div class="tiles cols-5 range-grid" id="range" role="radiogroup" aria-label="Range">
-                            <input type="radio" name="ix" id="ix1" value="1"><label for="ix1">1M</label>
-                            <input type="radio" name="ix" id="ix3" value="3"><label for="ix3">3M</label>
-                            <input type="radio" name="ix" id="ix6" value="6"><label for="ix6">6M</label>
-                            <input type="radio" name="ix" id="ix12" value="12" checked><label for="ix12">1Y</label>
-                            <input type="radio" name="ix" id="ix24" value="24"><label for="ix24">2Y</label>
-                            <input type="radio" name="ix" id="ix36" value="36"><label for="ix36">3Y</label>
-                            <input type="radio" name="ix" id="ix60" value="60"><label for="ix60">5Y</label>
-                            <input type="radio" name="ix" id="ix120" value="120"><label for="ix120">10Y</label>
-                            <input type="radio" name="ix" id="ix240" value="240"><label for="ix240">20Y</label>
-                            <input type="radio" name="ix" id="ix0" value="0"><label for="ix0">Max</label>
+                    <div class="ruler" id="range" role="radiogroup" aria-label="Range">
+                        <span class="ruler-line" aria-hidden="true"></span>
+                        <input type="radio" name="ix" id="ix1" value="1"><label for="ix1" style="--p:0.0000">1M</label>
+                        <input type="radio" name="ix" id="ix3" value="3"><label for="ix3" style="--p:0.1754">3M</label>
+                        <input type="radio" name="ix" id="ix6" value="6"><label for="ix6" style="--p:0.2861">6M</label>
+                        <input type="radio" name="ix" id="ix12" value="12" checked><label for="ix12" style="--p:0.3967">1Y</label>
+                        <input type="radio" name="ix" id="ix24" value="24"><label for="ix24" style="--p:0.5074">2Y</label>
+                        <input type="radio" name="ix" id="ix60" value="60"><label for="ix60" style="--p:0.6537">5Y</label>
+                        <input type="radio" name="ix" id="ix120" value="120"><label for="ix120" style="--p:0.7643">10Y</label>
+                        <input type="radio" name="ix" id="ix240" value="240"><label for="ix240" style="--p:0.8750">20Y</label>
+                        <input type="radio" name="ix" id="ix0" value="0"><label for="ix0" style="--p:1.0000">Max</label>
+                        <span class="ruler-mark" aria-hidden="true">1Y</span>
                     </div>
                     <div class="option-list date-range">
                         <label class="field-row"><span>From</span><input type="date" min="1991-01-01" id="start"></label>
