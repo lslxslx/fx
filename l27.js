@@ -295,6 +295,7 @@ class HistoricalPriceChart {
     this.restoreState();
     this.updateMovingAverageButton();
     this.bindControls();
+    this.bindMenuDrawer();
     this.observeLayout();
     this.ready = this.reloadData();
     // Optional metadata must never block the price chart.
@@ -403,6 +404,79 @@ class HistoricalPriceChart {
   closemenu() {
     const menu = document.getElementById('menu');
     if (menu && window.matchMedia('(max-width: 899px)').matches) menu.checked = false;
+  }
+
+  // Phones and tablets: the menu is a drawer on the right. A finger swiping left
+  // from the right edge pulls it open; swiping it back to the right closes it.
+  // The drawer follows the finger and settles open or closed when released.
+  bindMenuDrawer() {
+    const menu = document.getElementById('menu'), panel = document.getElementById('cpanel');
+    const holder = menu?.closest('menu'), edge = holder?.querySelector('.menu-edge'), backdrop = holder?.querySelector('.menu-backdrop');
+    if (!menu || !panel || !holder) return;
+    const small = () => window.matchMedia('(max-width: 899px)').matches;
+    let drag = null;
+    const place = offset => {
+      const width = panel.offsetWidth || 1;
+      const x = Math.max(0, Math.min(width, offset));
+      panel.style.transform = `translateX(${x}px)`;
+      if (backdrop) backdrop.style.opacity = String(1 - x / width);
+      return x;
+    };
+    const release = () => {
+      holder.classList.remove('dragging');
+      panel.style.transform = '';
+      if (backdrop) backdrop.style.opacity = '';
+      drag = null;
+    };
+    const begin = (event, opening) => {
+      if (!small() || event.pointerType === 'mouse' || drag) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, time: event.timeStamp, opening, claimed: false, offset: opening ? Infinity : 0 };
+    };
+    const move = event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.claimed) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        // A mostly vertical move inside the drawer is a scroll, not a swipe.
+        if (Math.abs(dx) < Math.abs(dy) * 1.2 || (drag.opening ? dx > 0 : dx < 0)) { if (!drag.opening) drag = null; return; }
+        drag.claimed = true;
+        holder.classList.add('dragging');
+        event.target.setPointerCapture?.(event.pointerId);
+      }
+      drag.offset = place(drag.opening ? panel.offsetWidth + dx : dx);
+      drag.speed = dx / Math.max(1, event.timeStamp - drag.time);
+    };
+    const end = event => {
+      if (!drag || event.pointerId !== drag.id) return;
+      if (drag.claimed) {
+        const width = panel.offsetWidth || 1, fast = Math.abs(drag.speed || 0) > 0.4;
+        const open = drag.opening ? (fast ? drag.speed < 0 : drag.offset < width * 0.6)
+          : !(fast ? drag.speed > 0 : drag.offset > width * 0.35);
+        menu.checked = open;
+      }
+      release();
+    };
+    if (edge) {
+      this.listen(edge, 'pointerdown', event => { begin(event, true); edge.setPointerCapture?.(event.pointerId); });
+      this.listen(edge, 'pointermove', move);
+      this.listen(edge, 'pointerup', end);
+      this.listen(edge, 'pointercancel', release);
+    }
+    // Sliders, fields and lists inside the drawer keep their own horizontal gestures.
+    this.listen(panel, 'pointerdown', event => {
+      if (!menu.checked || event.target.closest('.ruler, input[type=text], input[type=date], select')) return;
+      begin(event, false);
+    });
+    this.listen(panel, 'pointermove', move);
+    this.listen(panel, 'pointerup', end);
+    this.listen(panel, 'pointercancel', event => { if (drag && !drag.claimed) drag = null; else if (drag) end(event); });
+    if (backdrop) {
+      this.listen(backdrop, 'pointerdown', event => begin(event, false));
+      this.listen(backdrop, 'pointermove', move);
+      this.listen(backdrop, 'pointerup', event => { const tap = drag && !drag.claimed; end(event); if (tap || event.pointerType === 'mouse') menu.checked = false; });
+      this.listen(backdrop, 'pointercancel', release);
+    }
+    this.listen(document, 'keydown', event => { if (event.key === 'Escape' && menu.checked) menu.checked = false; });
   }
 
   // Default range when the interval changes: 1 year daily, 5 years weekly,
