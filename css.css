@@ -20,12 +20,10 @@
 	--up: #0f8a52;
 	--down: #c93a3a;
 	--chart-bg: #ffffff;
-	--update-bg: #fff960;
 	--knob: #ffffff;
 	--tile: #eceff2;
 	--tile-hover: #e3e7eb;
 	--tile-on: #d8dee4;
-	--update-color: #1a1a1a;
 
 	/* chart: axes and grid */
 	--axis-domainc: #696969;
@@ -300,24 +298,6 @@ footer p {
 	color: inherit;
 }
 
-#update {
-	justify-self: center;
-	width: 3.6rem;
-	height: 3.6rem;
-	border: 0;
-	border-radius: 50%;
-	background: var(--update-bg);
-	color: var(--update-color);
-	font-size: 1.8rem;
-	line-height: 1;
-	cursor: pointer;
-}
-
-#update:disabled {
-	opacity: .6;
-	cursor: progress;
-}
-
 @media screen and (min-width: 900px) {
 	.menu-toggle {
 		visibility: hidden;
@@ -336,6 +316,8 @@ footer p {
 	z-index: 3;
 	left: 0;
 	right: 0;
+	max-width: 32rem;
+	margin: 0 auto;
 	top: 100%;
 	max-height: calc(100vh - 7rem);
 	overflow-y: auto;

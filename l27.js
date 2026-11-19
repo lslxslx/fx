@@ -347,7 +347,9 @@ class HistoricalPriceChart {
         if (target.name === 'interval') this.switchintervalix(target.value);
         // A range button replaces a custom date range.
         if (target.name === 'ix') { this.clearDateRange(false); this.updateRuler(); }
-        this.closemenu(); this.reloadData();
+        // Only a new currency closes the menu on phones; period changes keep it open.
+        if (target.name === 'currency') this.closemenu();
+        this.reloadData();
       } else if (target.closest('#overlays, #indicators, #tools')) this.refreshIndicators();
     });
     // Buttons: dates, moving averages (add a row and focus its period, remove a row).
@@ -370,7 +372,6 @@ class HistoricalPriceChart {
       if (event.target.closest('#overlays, #indicators, #tools')) this.refreshIndicators();
       else this.reloadData();
     });
-    this.listen(document.getElementById('update'),'click',()=>{this.closemenu();this.reloadData();});
     this.listen(document, 'pointerdown', event => {
       if (!this.container.contains(event.target)) this.hideCrosshair?.();
     });
@@ -485,7 +486,6 @@ class HistoricalPriceChart {
     }
     this.dateRange = { fd: from, td: to };
     document.getElementById('range')?.classList.toggle('inactive', Boolean(from || to));
-    this.closemenu();
     this.reloadData();
   }
 
@@ -495,7 +495,7 @@ class HistoricalPriceChart {
     if (custom) custom.checked = false;
     this.dateRange = { fd: '', td: '' };
     document.getElementById('range')?.classList.remove('inactive');
-    if (reload) { this.closemenu(); this.reloadData(); }
+    if (reload) this.reloadData();
   }
 
   parameters() {
@@ -654,8 +654,6 @@ class HistoricalPriceChart {
 
   setLoading(loading) {
     this.state.loading = loading;
-    const button = document.getElementById('update');
-    if (button) { button.disabled = loading; button.value = loading ? '\u2026' : '\u21BB'; }
   }
 
   async reloadData() {
